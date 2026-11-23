@@ -1,0 +1,697 @@
+extends Node2D
+## All distances are metres. Drawing uses a fixed portrait canvas.
+const W := 540.0
+const H := 960.0
+const JELLY_HEIGHT_METRES := 1.0
+const PIXELS_PER_METRE := 70.0
+const ALTITUDE := 120.0
+const GRAVITY := 6.0
+const TERMINAL := 12.0
+const SAFE_SPEED := 2.5
+const COLORS := [Color("ff779d"), Color("ffc857"), Color("a390ff"), Color("50dbbd")]
+const NAMES := ["YOU", "MANGO", "BUBBLES", "PICKLE"]
+const POINTS := [10, 7, 4, 2]
+var racers: Array[Dictionary] = []
+var totals: Array[int] = [0, 0, 0, 0]
+var state := "menu"
+var round_number := 1
+var timer := 0.0
+var race_time := 0.0
+var camera_alt := ALTITUDE
+var finish_order: Array[int] = []
+var best_time := 0.0
+var wins := 0
+var muted := false
+var sound: AudioStreamPlayer
+var ui: Control
+var action: Button
+var heading: Label
+var detail: Label
+var badge: Label
+var stats: Label
+var mute_button: Button
+var particles: Array[Dictionary] = []
+var rng := RandomNumberGenerator.new()
+var animation_time := 0.0
+var countdown_number := 3
+var jump_flash := 0.0
+
+func _ready() -> void:
+	rng.randomize()
+	_load_record()
+	_make_sound()
+	_make_ui()
+	_reset_racers()
+	_menu()
+
+func _make_ui() -> void:
+	var layer := CanvasLayer.new()
+	add_child(layer)
+	ui = Control.new()
+	ui.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(ui)
+	heading = _label(30, 95, 480, 120, 39)
+	heading.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	detail = _label(35, 238, 470, 330, 22)
+	badge = _label(35, 25, 360, 40, 18)
+	badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	stats = _label(25, 797, 490, 50, 17)
+	stats.add_theme_color_override("font_color", Color("fff7df"))
+	action = Button.new()
+	action.position = Vector2(35, 866)
+	action.size = Vector2(470, 70)
+	action.add_theme_font_size_override("font_size", 25)
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color("ffce67")
+	normal.border_color = Color("d99a49")
+	normal.border_width_bottom = 5
+	normal.set_corner_radius_all(22)
+	normal.shadow_color = Color("254b6520")
+	normal.shadow_size = 7
+	normal.shadow_offset = Vector2(0, 5)
+	action.add_theme_stylebox_override("normal", normal)
+	var pressed := normal.duplicate() as StyleBoxFlat
+	pressed.bg_color = Color("ffb952")
+	action.add_theme_stylebox_override("pressed", pressed)
+	action.add_theme_stylebox_override("hover", normal)
+	var disabled_style := normal.duplicate() as StyleBoxFlat
+	disabled_style.bg_color = Color("a4bec7")
+	disabled_style.border_color = Color("8ba7b3")
+	action.add_theme_stylebox_override("disabled", disabled_style)
+	action.add_theme_color_override("font_disabled_color", Color("f3fbff"))
+	action.add_theme_color_override("font_color", Color("30344f"))
+	action.add_theme_color_override("font_hover_color", Color("30344f"))
+	action.add_theme_color_override("font_pressed_color", Color("30344f"))
+	action.pressed.connect(_action)
+	ui.add_child(action)
+	mute_button = Button.new()
+	mute_button.position = Vector2(440, 22)
+	mute_button.size = Vector2(78, 42)
+	mute_button.text = "SFX OFF" if muted else "SFX ON"
+	var mute_style := StyleBoxFlat.new()
+	mute_style.bg_color = Color("ffffffc8")
+	mute_style.set_corner_radius_all(18)
+	mute_button.add_theme_stylebox_override("normal", mute_style)
+	mute_button.add_theme_stylebox_override("hover", mute_style)
+	mute_button.add_theme_color_override("font_color", Color("28465d"))
+	mute_button.pressed.connect(func():
+		muted = not muted
+		mute_button.text = "SFX OFF" if muted else "SFX ON"
+		_save_record())
+	ui.add_child(mute_button)
+
+func _label(x: float, y: float, width: float, height: float, font_size: int) -> Label:
+	var label := Label.new()
+	label.position = Vector2(x, y)
+	label.size = Vector2(width, height)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_color_override("font_color", Color("30344f"))
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui.add_child(label)
+	return label
+
+func _reset_racers() -> void:
+	racers.clear()
+	finish_order.clear()
+	particles.clear()
+	for i in range(4):
+		racers.append({"alt": ALTITUDE, "speed": 0.0, "open": false,
+			"deploy": 0.0, "done": false, "safe": false, "time": 0.0,
+			"target": rng.randf_range(17.0, 23.0), "squash": 0.0})
+	camera_alt = ALTITUDE
+	race_time = 0.0
+
+func _menu() -> void:
+	state = "menu"
+	heading.text = "JellyChute"
+	heading.add_theme_font_size_override("font_size", 58)
+	detail.text = "FREEFALL RACERS\n\nOpen late. Land first.\nTap once to pop your parachute."
+	badge.text = "FLIGHT CLUB"
+	stats.text = "WINS  %d     •     BEST SAFE DROP  %s" % [wins, _time_text(best_time)]
+	action.text = "LET'S DROP!"
+
+func _action() -> void:
+	match state:
+		"menu", "podium":
+			totals = [0, 0, 0, 0]
+			round_number = 1
+			_start_round()
+		"results":
+			if round_number == 3:
+				_podium()
+			else:
+				round_number += 1
+				_start_round()
+		"race":
+			_deploy(0)
+
+func _unhandled_input(event: InputEvent) -> void:
+	if state != "race":
+		return
+	if event is InputEventScreenTouch and event.pressed:
+		_deploy(0)
+	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		_deploy(0)
+	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_SPACE:
+		_deploy(0)
+
+func _start_round() -> void:
+	_reset_racers()
+	state = "countdown"
+	heading.add_theme_font_size_override("font_size", 64)
+	timer = 3.0
+	countdown_number = 3
+	jump_flash = 0.0
+	_tone(440.0, 0.09)
+	heading.text = "3"
+	detail.text = ""
+	stats.text = "You are the PINK jelly"
+	badge.text = "ROUND %d / 3" % round_number
+	action.text = "GET READY..."
+	action.disabled = true
+
+func _deploy(i: int) -> void:
+	if state != "race" or racers[i].open or racers[i].done:
+		return
+	racers[i].open = true
+	if i == 0:
+		action.text = "CHUTE OPEN!"
+		_tone(660.0, 0.12)
+
+func _process(delta: float) -> void:
+	animation_time += delta
+	jump_flash = maxf(0.0, jump_flash - delta)
+	timer -= delta
+	if state == "settle":
+		camera_alt = lerpf(camera_alt, 0.0, minf(1.0, delta * 18.0))
+	for r in racers:
+		if r.done:
+			r.squash = maxf(0.0, r.squash - delta * (2.5 if r.safe else 0.9))
+	for p in particles:
+		p.pos += p.vel * delta
+		p.vel.y += 120.0 * delta
+		p.life -= delta
+	particles = particles.filter(func(p): return p.life > 0.0)
+	if state == "countdown":
+		var digit := clampi(ceili(timer), 1, 3)
+		if digit != countdown_number:
+			countdown_number = digit
+			_tone(440.0 + (3 - digit) * 110.0, 0.09)
+		heading.text = str(digit) + "..."
+		heading.scale = Vector2.ONE * (1.0 + 0.08 * fposmod(timer, 1.0))
+		heading.pivot_offset = heading.size * 0.5
+		if timer <= 0.0:
+			state = "race"
+			jump_flash = 0.65
+			heading.scale = Vector2.ONE
+			heading.text = "GO!"
+			action.disabled = false
+			action.text = "OPEN PARACHUTE"
+			_tone(880.0, 0.15)
+	elif state == "race":
+		race_time += delta
+		heading.text = "GO!" if jump_flash > 0.0 else ""
+		for i in range(4):
+			var r: Dictionary = racers[i]
+			if r.done:
+				continue
+			if i > 0 and r.alt <= r.target:
+				_deploy(i)
+			if r.open:
+				r.deploy = minf(1.0, r.deploy + delta / 0.65)
+				r.speed = move_toward(r.speed, 8.0 if r.alt > 35.0 else 2.0, 8.0 * r.deploy * delta)
+			else:
+				r.speed = minf(TERMINAL, r.speed + GRAVITY * delta)
+			r.alt = maxf(0.0, r.alt - r.speed * delta)
+			if r.alt <= 0.0:
+				_land(i)
+		var lowest := float(racers[0].alt)
+		if racers[0].done:
+			lowest = 0.0
+		camera_alt = lerpf(camera_alt, lowest, minf(1.0, delta * 18.0))
+		stats.text = "%.1f m   •   %.1f m/s   •   %.1f s\n%s" % [racers[0].alt, racers[0].speed, race_time, _flight_hint()]
+		if finish_order.size() == 4:
+			state = "settle"
+			timer = 1.6
+		elif race_time > 45.0:
+			# A very early chute must not stall the short round indefinitely.
+			for i in range(4):
+				if not racers[i].done:
+					racers[i].alt = 0.0
+					_land(i)
+	elif state == "settle" and timer <= 0.0:
+		_results()
+	queue_redraw()
+
+func _flight_hint() -> String:
+	if racers[0].done:
+		return "BUTTER-SOFT LANDING!" if racers[0].safe else "PANCAKE DELIVERY!"
+	if racers[0].open:
+		return "Hold on to your cheeks!"
+	if racers[0].alt < 15:
+		return "OPEN NOW!"
+	if racers[0].alt < 25:
+		return "Getting spicy..."
+	return "Wait for it..."
+
+func _land(i: int) -> void:
+	var r: Dictionary = racers[i]
+	r.done = true
+	r.safe = r.speed <= SAFE_SPEED
+	r.speed = 0.0
+	r.time = race_time
+	r.squash = 1.0
+	finish_order.append(i)
+	for k in range(12):
+		particles.append({"pos": Vector2(95 + i * 115, -8),
+			"vel": Vector2(rng.randf_range(-90, 90), rng.randf_range(-140, -30)),
+			"life": rng.randf_range(0.4, 1.0), "color": COLORS[i]})
+	if i == 0:
+		_tone(440.0 if r.safe else 100.0, 0.2)
+		if r.safe and (best_time == 0.0 or race_time < best_time):
+			best_time = race_time
+			_save_record()
+
+func _ranked() -> Array[int]:
+	var order: Array[int] = []
+	for i in finish_order:
+		if racers[i].safe:
+			order.append(i)
+	for i in finish_order:
+		if not racers[i].safe:
+			order.append(i)
+	return order
+
+func _results() -> void:
+	state = "results"
+	var order := _ranked()
+	heading.add_theme_font_size_override("font_size", 39)
+	heading.text = "SMOOTH MOVES!" if racers[0].safe else "OH, CREPE!"
+	detail.text = "ROUND %d RESULTS\n\n" % round_number
+	for rank in range(4):
+		var i := order[rank]
+		var points: int = POINTS[rank] if racers[i].safe else 0
+		totals[i] += points
+		detail.text += "%d. %s   %s   +%d\n" % [rank + 1, NAMES[i], _time_text(racers[i].time) if racers[i].safe else "SPLAT", points]
+	stats.text = "TOTAL POINTS   YOU %d  •  MANGO %d\nBUBBLES %d  •  PICKLE %d" % totals
+	action.text = "SHOW PODIUM" if round_number == 3 else "NEXT ROUND"
+	action.disabled = false
+
+func _podium() -> void:
+	state = "podium"
+	heading.add_theme_font_size_override("font_size", 36)
+	var order: Array[int] = [0, 1, 2, 3]
+	order.sort_custom(func(a, b):
+		if totals[a] == totals[b]:
+			return order_tiebreak(a) < order_tiebreak(b)
+		return totals[a] > totals[b])
+	if order[0] == 0:
+		wins += 1
+		_save_record()
+	heading.text = "YOU TAKE THE CROWN!" if order[0] == 0 else "%s WINS!" % NAMES[order[0]]
+	detail.text = "FLIGHT CLUB PODIUM\n\n"
+	for rank in range(4):
+		detail.text += "%d. %s     %d pts\n" % [rank + 1, NAMES[order[rank]], totals[order[rank]]]
+	detail.text += "\nTied scores: final round decides."
+	stats.text = "WINS  %d     •     BEST  %s" % [wins, _time_text(best_time)]
+	action.text = "ONE MORE TOURNAMENT!"
+
+func order_tiebreak(i: int) -> int:
+	return _ranked().find(i)
+
+# The jelly origin is its sole: altitude zero always touches the pad top.
+func _ground_y() -> float:
+	return 690.0 + maxf(camera_alt - 4.2, 0.0) * PIXELS_PER_METRE
+
+func _racer_feet(i: int) -> Vector2:
+	return Vector2(95 + i * 115, _ground_y() - float(racers[i].alt) * PIXELS_PER_METRE)
+
+func _draw() -> void:
+	var flight := state in ["race", "settle", "countdown"]
+	for band in range(48):
+		var shade := Color("72c9f2").lerp(Color("e6f7ed"), float(band) / 47.0)
+		draw_rect(Rect2(0, band * 20, W, 21), shade)
+	_ellipse(Vector2(450, 155), Vector2(62, 62), Color("ffffff16"))
+	_ellipse(Vector2(450, 155), Vector2(43, 43), Color("fff4c4"))
+	for i in range(7):
+		var y := fposmod(float(i * 183) - (ALTITUDE - camera_alt) * PIXELS_PER_METRE * 0.10, 1150.0) - 80.0
+		if flight or y > 400:
+			_cloud(Vector2(float((i * 191 + 45) % 540), y), 0.65 + float(i % 3) * 0.22)
+	var ground := _ground_y() if flight else 760.0
+	_landscape(ground)
+	if flight:
+		_draw_flight_world()
+		if state == "countdown" or (state == "race" and race_time < 2.0):
+			var launch_offset := (ALTITUDE - camera_alt) * PIXELS_PER_METRE
+			_plane(Vector2(270, 270 - launch_offset))
+			draw_line(Vector2(42, 396 - launch_offset), Vector2(498, 396 - launch_offset), Color("43566f"), 8, true)
+		for i in range(4):
+			var x := 95.0 + i * 115.0
+			_ellipse(Vector2(x, ground + 12), Vector2(48, 10), Color("254b6520"))
+			_box(Rect2(x - 43, ground, 86, 18), COLORS[i].darkened(0.12), 9)
+			_box(Rect2(x - 41, ground, 82, 7), COLORS[i].lightened(0.42), 4)
+			var feet := _racer_feet(i)
+			if feet.y >= 150 and feet.y < 850:
+				_jelly(feet, i, true)
+				if not racers[i].done:
+					_pill(Vector2(x, feet.y + 22), NAMES[i], COLORS[i] if i == 0 else Color("ffffffcc"), 14)
+			elif feet.y < 150:
+				_pill(Vector2(x, 161), NAMES[i] + " ↑", Color("ffffffcc"), 12)
+			elif not racers[i].done:
+				_pill(Vector2(x, 744), NAMES[i] + " ↓", Color("ffffffcc"), 12)
+		_box(Rect2(18, 315, 12, 340), Color("ffffff70"), 6)
+		_box(Rect2(20, 655 - 25.0 / ALTITUDE * 340, 8, 25.0 / ALTITUDE * 340), Color("ff8585"), 4)
+		_ellipse(Vector2(24, 655 - float(racers[0].alt) / ALTITUDE * 340), Vector2(9, 9), Color("ffffff"))
+		_ellipse(Vector2(24, 655 - float(racers[0].alt) / ALTITUDE * 340), Vector2(6, 6), COLORS[0])
+		if state == "countdown":
+			_pill(Vector2(270, 225), "3 • 2 • 1 • JUMP!", Color("ffffffd0"), 16)
+	else:
+		if state == "menu":
+			# Hero illustration with a larger silhouette and tiny rival squad.
+			_ellipse(Vector2(270, 689), Vector2(100, 17), Color("254b6518"))
+			draw_set_transform(Vector2(270, 675), -0.08, Vector2(1.8, 1.8))
+			_jelly(Vector2.ZERO, 0, false, true)
+			draw_set_transform(Vector2.ZERO)
+			for j in range(1, 4):
+				_jelly(Vector2(150 + (j - 1) * 120, 750), j, false)
+		elif state == "podium":
+			var order: Array[int] = [0, 1, 2, 3]
+			order.sort_custom(func(a,b): return totals[a] > totals[b] if totals[a] != totals[b] else order_tiebreak(a) < order_tiebreak(b))
+			for place in range(3):
+				var x: float = [270.0, 130.0, 410.0][place]
+				var top: float = [676.0, 716.0, 736.0][place]
+				_box(Rect2(x - 49, top + 5, 98, 785 - top), Color("d3a843"), 14)
+				_box(Rect2(x - 49, top, 98, 780 - top), Color("ffdd7c"), 14)
+				_text(Vector2(x, top + 32), str(place + 1), 23, Color("795739"))
+				_jelly(Vector2(x, top), order[place], false)
+		else:
+			for i in range(4):
+				_jelly(Vector2(95 + i * 115, 751), i, true)
+		# Quiet paper card keeps results readable against the landscape.
+		if state != "menu":
+			_box(Rect2(27, 222, 486, 355), Color("254b6514"), 26)
+			_box(Rect2(27, 215, 486, 355), Color("fffdf4f5"), 26)
+	# HUD chrome, beneath native labels and buttons.
+	_box(Rect2(20, 20, 185, 48), Color("ffffffc8"), 24)
+	_box(Rect2(24, 782, 492, 68), Color("203c58ed"), 22)
+	for p in particles:
+		_ellipse(p.pos + Vector2(0, _ground_y()), Vector2(4, 4), p.color)
+
+func _landscape(ground: float) -> void:
+	if ground > 1120:
+		return
+	for layer in range(3):
+		var points := PackedVector2Array([Vector2(-30, maxf(ground + 400, 1100))])
+		for k in range(33):
+			var x := -30.0 + k * 20.0
+			var y := ground - 90 + layer * 37 + sin(k * 0.16 + layer * 2.0) * (36 - layer * 5)
+			points.append(Vector2(x, y))
+		points.append(Vector2(580, maxf(ground + 400, 1100)))
+		draw_colored_polygon(points, [Color("9fd4ba"), Color("79bea0"), Color("58a982")][layer])
+	_box(Rect2(-20, ground + 15, 580, 420), Color("83c567"), 0)
+	for j in range(27):
+		var x := float((j * 83 + 17) % 540)
+		var y := ground + 39 + float((j * 37) % 130)
+		draw_line(Vector2(x, y), Vector2(x + 3, y - 7), Color("579b56"), 2, true)
+		if j % 3 == 0:
+			_ellipse(Vector2(x, y - 8), Vector2(3, 3), Color("fff1b0"))
+	# Windsock gives the landing field a tiny sense of place.
+	draw_line(Vector2(510, ground + 15), Vector2(510, ground - 110), Color("456778"), 4, true)
+	var sock := PackedVector2Array([Vector2(510, ground - 112), Vector2(459, ground - 100), Vector2(459, ground - 85), Vector2(510, ground - 90)])
+	draw_colored_polygon(sock, Color("ff947e"))
+	draw_line(Vector2(494, ground - 107), Vector2(494, ground - 88), Color("fff6dc"), 9)
+
+func _box(rect: Rect2, color: Color, radius: int) -> void:
+	var style := StyleBoxFlat.new()
+	style.bg_color = color
+	style.set_corner_radius_all(radius)
+	style.anti_aliasing = true
+	draw_style_box(style, rect)
+
+func _ellipse(center: Vector2, radius: Vector2, color: Color) -> void:
+	var points := PackedVector2Array()
+	for k in range(48):
+		var a := TAU * k / 48.0
+		points.append(center + Vector2(cos(a), sin(a)) * radius)
+	draw_colored_polygon(points, color)
+
+func _text(center: Vector2, text: String, font_size: int, color: Color) -> void:
+	var font := ThemeDB.fallback_font
+	var width := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+	draw_string(font, center + Vector2(-width / 2.0, font_size * 0.32), text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
+
+func _pill(center: Vector2, text: String, color: Color, font_size: int) -> void:
+	var width := ThemeDB.fallback_font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + 22
+	_box(Rect2(center - Vector2(width / 2, 13), Vector2(width, 26)), color, 13)
+	_text(center, text, font_size, Color("28465d"))
+
+func _cloud(pos: Vector2, size: float) -> void:
+	_ellipse(pos + Vector2(0, 9), Vector2(66, 16) * size, Color("70b8df24"))
+	_ellipse(pos, Vector2(64, 18) * size, Color("effaff"))
+	_ellipse(pos + Vector2(-24, -13) * size, Vector2(25, 24) * size, Color("effaff"))
+	_ellipse(pos + Vector2(10, -22) * size, Vector2(32, 30) * size, Color("effaff"))
+	_ellipse(pos + Vector2(39, -6) * size, Vector2(24, 19) * size, Color("effaff"))
+
+func _body_shape(center: Vector2, size: Vector2, color: Color) -> void:
+	var points := PackedVector2Array()
+	for k in range(64):
+		var a := TAU * k / 64.0
+		var cx := cos(a)
+		var cy := sin(a)
+		var x := signf(cx) * pow(absf(cx), 0.72)
+		var y := signf(cy) * pow(absf(cy), 0.8)
+		points.append(center + Vector2(x * (1.0 + cy * 0.08), y) * size)
+	draw_colored_polygon(points, color)
+
+func _jelly(feet: Vector2, i: int, flight: bool, hero: bool = false) -> void:
+	var r: Dictionary = racers[i]
+	var wind := clampf(float(r.speed) / TERMINAL, 0.0, 1.0) if flight and state != "countdown" and not r.done else 0.0
+	var clock := animation_time * (5.0 + wind * 16.0) + i
+	var sx := 1.0 + sin(clock) * 0.025
+	var sy := 1.0 / sx
+	var crashed: bool = flight and r.done and not r.safe
+	if flight and state == "race" and not r.open and not r.done:
+		sx = lerpf(1.0, 0.87, wind) + sin(clock * 1.3) * 0.025 * wind
+		sy = 1.0 / sx
+	if flight and r.done:
+		var impact := float(r.squash)
+		var stretch := _landing_stretch(impact, r.safe)
+		sx = stretch.x
+		sy = stretch.y
+	# Only the body deforms; its base remains at the feet coordinate.
+	var center := feet - Vector2(0, 35 * sy)
+	var color: Color = COLORS[i]
+	var show_chute: bool = hero or (flight and r.open and not r.done)
+	_scarf(center, color, clock, wind, crashed)
+	if show_chute:
+		_chute(center, color, 1.0 if hero else float(r.deploy))
+	if flight and state == "race" and not r.done and not r.open:
+		for j in range(2):
+			var x := feet.x + (-42 if j == 0 else 42)
+			draw_line(Vector2(x, feet.y - 85), Vector2(x, feet.y - 115 - sin(clock) * 10), Color("ffffff8c"), 3, true)
+	# Limbs behind the body, with round ends.
+	for side in [-1, 1]:
+		var start := center + Vector2(side * 25 * sx, 7 * sy)
+		var end := center + Vector2(side * (39 * sx + sin(clock + side) * wind * 4), -22 if show_chute else lerpf(16.0, -33.0, wind) + sin(clock + side) * wind * 9)
+		draw_line(start, end, color.darkened(0.18), 10, true)
+		_ellipse(end, Vector2(6, 6), color)
+		if not crashed or r.squash < 0.35:
+			_ellipse(feet + Vector2(side * 16 * sx, -4), Vector2(12, 6), color.darkened(0.2))
+	_body_shape(center + Vector2(0, 2), Vector2(33 * sx, 33 * sy), color.darkened(0.25))
+	_body_shape(center - Vector2(0, 3 * sy), Vector2(31 * sx, 32 * sy), color)
+	_body_shape(center - Vector2(4 * sx, 11 * sy), Vector2(25 * sx, 23 * sy), color.lightened(0.13))
+	_ellipse(center + Vector2(-16 * sx, -20 * sy), Vector2(7 * sx, 10 * sy), Color("ffffff60"))
+	_ellipse(center + Vector2(-9 * sx, -27 * sy), Vector2(3, 3) * Vector2(sx, sy), Color("ffffffa0"))
+	for side in [-1, 1]:
+		var eye := center + Vector2(side * 12 * sx, -4 * sy)
+		if crashed:
+			_ellipse(eye, Vector2(8, 9), Color("fffdf3"))
+			var spiral := PackedVector2Array()
+			for spiral_step in range(28):
+				var angle := spiral_step / 27.0 * TAU * 1.5
+				spiral.append(eye + Vector2(cos(angle), sin(angle)) * (1.0 + spiral_step / 27.0 * 5.0))
+			draw_polyline(spiral, Color("363855"), 1.7, true)
+		else:
+			_ellipse(eye + Vector2(0, 1), Vector2(9, 11), color.darkened(0.12))
+			_ellipse(eye, Vector2(8, 10), Color("fffdf3"))
+			_ellipse(eye + Vector2(1, 2), Vector2(4, 6), Color("30384e"))
+			_ellipse(eye + Vector2(0, -1), Vector2(1.7, 2.3), Color.WHITE)
+		_ellipse(center + Vector2(side * 23 * sx, 10 * sy), Vector2(6, 3.5) * Vector2(sx, sy), Color("f15d794c"))
+	if crashed:
+		var mouth := PackedVector2Array()
+		for k in range(12):
+			mouth.append(center + Vector2(-9 + k * 1.6, 13 + sin(k * 0.9) * 2))
+		draw_polyline(mouth, Color("363855"), 2.5, true)
+		for k in range(3):
+			_star(center + Vector2(cos(clock + k * 2.1) * 32, -33 + sin(clock + k * 2.1) * 7), 5, Color("fff0a0"))
+	elif flight and not r.open and r.alt < 25:
+		_ellipse(center + Vector2(0, 15), Vector2(5, 7), Color("713754"))
+	else:
+		draw_arc(center + Vector2(0, 10), 7, 0.1, PI - 0.1, 16, Color("623c59"), 3, true)
+	# Candy waist strap and buckle.
+	if show_chute:
+		draw_line(center + Vector2(-24 * sx, 21 * sy), center + Vector2(24 * sx, 21 * sy), Color("384960"), 5, true)
+		_box(Rect2(center + Vector2(-4, 17 * sy), Vector2(8, 8)), Color("ffe29c"), 2)
+
+func _chute(center: Vector2, color: Color, deploy: float) -> void:
+	if deploy <= 0.01:
+		return
+	var canopy := center - Vector2(0, 85 * deploy)
+	for side in [-1, 1]:
+		draw_line(center + Vector2(side * 25, 12), canopy + Vector2(side * 49 * deploy, 0), Color("466078"), 1.7, true)
+		draw_line(center + Vector2(side * 25, 12), canopy + Vector2(side * 17 * deploy, 4 * deploy), Color("466078"), 1.3, true)
+	for panel in range(4):
+		var points := PackedVector2Array()
+		var a0 := PI + panel * PI / 4
+		var a1 := a0 + PI / 4
+		for k in range(13):
+			var a := lerpf(a0, a1, k / 12.0)
+			points.append(canopy + Vector2(cos(a) * 53, sin(a) * 43) * deploy)
+		var right := cos(a1) * 53
+		var left := cos(a0) * 53
+		for k in range(9):
+			var t := k / 8.0
+			points.append(canopy + Vector2(lerpf(right, left, t), sin(t * PI) * 6) * deploy)
+		draw_colored_polygon(points, color.lightened(0.2) if panel % 2 == 0 else Color("fff6df"))
+		points.append(points[0])
+		draw_polyline(points, color.darkened(0.15), 1.4, true)
+	draw_arc(canopy, 1, PI, TAU, 12, Color.WHITE, 1, true)
+
+func _star(center: Vector2, size: float, color: Color) -> void:
+	var points := PackedVector2Array()
+	for k in range(10):
+		var angle := -PI / 2 + TAU * k / 10.0
+		points.append(center + Vector2(cos(angle), sin(angle)) * size * (1.0 if k % 2 == 0 else 0.45))
+	draw_colored_polygon(points, color)
+
+func _time_text(value: float) -> String:
+	return "--" if value <= 0 else "%.2fs" % value
+
+func _load_record() -> void:
+	var config := ConfigFile.new()
+	if config.load("user://records.cfg") == OK:
+		best_time = float(config.get_value("records", "best_time", 0.0))
+		wins = int(config.get_value("records", "wins", 0))
+		muted = bool(config.get_value("settings", "muted", false))
+
+func _save_record() -> void:
+	var config := ConfigFile.new()
+	config.set_value("records", "best_time", best_time)
+	config.set_value("records", "wins", wins)
+	config.set_value("settings", "muted", muted)
+	config.save("user://records.cfg")
+
+func _make_sound() -> void:
+	sound = AudioStreamPlayer.new()
+	add_child(sound)
+
+func _tone(frequency: float, duration: float) -> void:
+	if muted:
+		return
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = 22050
+	var frames := int(22050 * duration)
+	var bytes := PackedByteArray()
+	bytes.resize(frames * 2)
+	for frame in range(frames):
+		var sample := sin(TAU * frequency * frame / 22050.0) * 0.18 * (1.0 - float(frame) / frames)
+		bytes.encode_s16(frame * 2, int(sample * 32767))
+	stream.data = bytes
+	sound.stream = stream
+	sound.play()
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_PAUSED:
+		_save_record()
+		get_tree().paused = true
+	elif what == NOTIFICATION_APPLICATION_RESUMED:
+		get_tree().paused = false
+
+func _plane(pos: Vector2) -> void:
+	_box(Rect2(pos - Vector2(200, 32), Vector2(400, 64)), Color("fff5df"), 32)
+	draw_colored_polygon(PackedVector2Array([pos + Vector2(-50, -20), pos + Vector2(60, -90), pos + Vector2(95, -85), pos + Vector2(25, -10)]), Color("ff779d"))
+	draw_colored_polygon(PackedVector2Array([pos + Vector2(-50, 15), pos + Vector2(60, 65), pos + Vector2(95, 60), pos + Vector2(25, 5)]), Color("ff779d"))
+	for k in range(5):
+		draw_circle(pos + Vector2(-120 + k * 48, -7), 12, Color("6eb9df"))
+	draw_line(pos + Vector2(210, -42), pos + Vector2(210, 42), Color("343957"), 7, true)
+
+
+
+
+
+
+func _scarf(center: Vector2, color: Color, clock: float, wind: float, flat: bool) -> void:
+	if flat:
+		return
+	var points := PackedVector2Array()
+	var anchor := center + Vector2(22, 15)
+	for k in range(10):
+		var t := k / 9.0
+		points.append(anchor + Vector2(10 + t * 20 + sin(clock - t * 6) * 7 * wind * t, -t * (12 + wind * 62)))
+	for k in range(9, -1, -1):
+		var t := k / 9.0
+		points.append(anchor + Vector2(2 + t * 20 + sin(clock - t * 6) * 7 * wind * t, -t * (12 + wind * 62) + 4))
+	draw_colored_polygon(points, Color("fff0c8") if color != COLORS[1] else Color("ed687d"))
+	draw_polyline(points, color.darkened(0.18), 1.0, true)
+
+func _world_y(altitude: float, parallax: float = 1.0) -> float:
+	# Every foreground object shares the jelly's metres-to-pixels conversion.
+	return 690.0 + (maxf(camera_alt - 4.2, 0.0) - altitude) * PIXELS_PER_METRE * parallax
+
+func _draw_flight_world() -> void:
+	if state == "countdown":
+		return
+	# A one-metre ruler makes the physical scale visible beside the racers.
+	for metre in range(maxi(0, floori(camera_alt) - 10), mini(int(ALTITUDE) + 1, ceili(camera_alt) + 10)):
+		var tick_y := _world_y(float(metre))
+		if tick_y > 235 and tick_y < 750:
+			var major := metre % 5 == 0
+			draw_line(Vector2(530 if major else 535, tick_y), Vector2(540, tick_y), Color("436b8860"), 1.5, true)
+			if major:
+				_text(Vector2(512, tick_y), str(metre) + "m", 11, Color("436b88"))
+	# Near cloud banks overtake the racers upward. Far clouds move more slowly.
+	for k in range(12):
+		var altitude := 8.0 + k * 11.0
+		var y := _world_y(altitude, 0.45)
+		if y > 110 and y < 780:
+			_cloud(Vector2(-22 if k % 2 == 0 else 565, y), 1.5)
+	# Five discrete flocks, sized at about 0.35 m wingspan (25px).
+	for flock in range(5):
+		var altitude := 18.0 + flock * 21.0
+		for bird_index in range(3):
+			var y := _world_y(altitude + bird_index * 0.35)
+			if y < 115 or y > 765:
+				continue
+			var direction := 1.0 if flock % 2 == 0 else -1.0
+			var x := fposmod(60 + flock * 97 + bird_index * 43 + animation_time * 35 * direction, 500) + 20
+			_bird(Vector2(x, y), animation_time * 11 + bird_index)
+	# Streak displacement is driven by actual descent, not an unrelated timer.
+	var speed := 0.0 if racers[0].done else float(racers[0].speed)
+	var intensity := clampf(speed / TERMINAL, 0.0, 1.0)
+	if intensity < 0.15:
+		return
+	for k in range(22):
+		var x := float((k * 83 + 7) % 530) + 5
+		var travelled := (ALTITUDE - camera_alt) * PIXELS_PER_METRE
+		var y := fposmod(k * 137.0 - travelled * (0.65 + (k % 3) * 0.18), 650.0) + 110
+		var length := lerpf(7, 62, intensity) * (0.5 + (k % 3) * 0.25)
+		draw_line(Vector2(x, y), Vector2(x, y - length), Color(1, 1, 1, 0.16 + intensity * 0.3), 1.5, true)
+
+func _bird(pos: Vector2, phase: float) -> void:
+	var flap := sin(phase) * 9.0
+	var points := PackedVector2Array([pos + Vector2(-13, -flap), pos + Vector2(-6, -4), pos, pos + Vector2(6, -4), pos + Vector2(13, -flap)])
+	draw_polyline(points, Color("4c7189"), 2.5, true)
+	_ellipse(pos + Vector2(0, 1), Vector2(4, 2), Color("fff6dd"))
+
+func _landing_stretch(impact: float, safe: bool) -> Vector2:
+	if safe:
+		var width := 1.0 + impact * 0.27
+		return Vector2(width, 1.0 / width)
+	var progress := 1.0 - impact
+	var rebound := sin(progress * PI * 3) * sin(progress * PI) * 0.1
+	return Vector2(1.0 + impact * 0.65 - rebound, 1.0 - impact * 0.72 + rebound)
+
+

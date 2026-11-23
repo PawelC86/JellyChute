@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://dkfdmqel2r7cn"]
+
+[ext_resource type="Script" uid="uid://b2j2j2v4tem4b" path="res://main.gd" id="1"]
+
+[node name="JellyChute" type="Node2D" unique_id=554668140]
+script = ExtResource("1")
