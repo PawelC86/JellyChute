@@ -142,7 +142,7 @@ func configure_ui() -> void:
 	g.action_hint.add_theme_color_override("font_color", INK)
 	g.action.add_theme_font_override("font", bold)
 	g.action.add_theme_font_size_override("font_size", 23)
-	for arrow in g.character_buttons:
+	for arrow in g.character_buttons + g.chute_buttons:
 		arrow.add_theme_font_override("font", bold)
 		for key in ["font_color", "font_hover_color", "font_pressed_color"]:
 			arrow.add_theme_color_override(key, INK)
@@ -174,7 +174,7 @@ func render() -> void:
 	g.draw_texture_rect(sky, Rect2(0, 0, 540, 960), false, Color.WHITE)
 	# The reference uses an open turquoise sky rather than a paper sun.
 	for i in range(7):
-		var y: float = fposmod(float(i * 183) - (g.start_altitude - g.camera_alt) * g.PIXELS_PER_METRE * 0.10, 1150.0) - 80
+		var y: float = flight_cloud_y(i)
 		if flight or y > 410:
 			cloud(Vector2(float((i * 191 + 45) % 540), y), 0.65 + float(i % 3) * 0.22)
 	var ground: float = g._ground_y() if flight else 760.0
@@ -193,7 +193,9 @@ func render() -> void:
 				jelly(feet, i, true, false, g.RACER_SCALE)
 				if not g.racers[i].done:
 					pill(Vector2(x, feet.y + 20), g.NAMES[i], i == 0)
-			elif feet.y < 145:
+				else:
+					pill(Vector2(x, feet.y + 24), "#%d %s" % [g._ranked().find(i) + 1, g.NAMES[i]], i == 0)
+			elif feet.y < 145 and g.state != "settle":
 				pill(Vector2(x, 168), g.NAMES[i] + " ↑", i == 0)
 			elif not g.racers[i].done:
 				pill(Vector2(x, 746), g.NAMES[i] + " ↓", i == 0)
@@ -225,6 +227,13 @@ func render() -> void:
 	draw_dust()
 	for p in g.particles:
 		g._star(p.pos + Vector2(0, g._ground_y()), 4, Color("edc270"))
+
+func flight_cloud_y(index: int) -> float:
+	# Use the same clamped camera height as the ground and world objects.
+	# Once the camera reaches ground, settling must not shift the cloud layer.
+	var camera_height: float = maxf(g.camera_alt - g.CAMERA_LEAD_METRES, 0.0)
+	var start_height: float = maxf(g.start_altitude - g.CAMERA_LEAD_METRES, 0.0)
+	return fposmod(float(index * 183) - (start_height - camera_height) * g.PIXELS_PER_METRE * 0.10, 1150.0) - 80.0
 
 func ink_box(rect: Rect2, color: Color, radius: int) -> void:
 	var style := StyleBoxFlat.new()
@@ -310,7 +319,7 @@ func jelly(feet: Vector2, i: int, flight: bool, hero: bool = false, size: float 
 	var chute: bool = hero or (flight and r.open and not r.done)
 	g.draw_set_transform_matrix(root)
 	if chute:
-		chute_at(skin, 1.0 if hero else float(r.deploy), clock)
+		chute_at(g.chute_skin(i), 1.0 if hero else float(r.deploy), clock)
 	# Cloth scarf follows airflow, attached behind the torso.
 	var scarf_points := PackedVector2Array()
 	for k in range(10):
@@ -543,6 +552,7 @@ func render_menu() -> void:
 	# Logo, character art, chooser and records have separate vertical bands.
 	_sprite(logo, Rect2(30, 34 + sin(t * 1.1) * 2, 480, 240))
 	text_at(Vector2(270, 291), "CHOOSE YOUR JELLY", 20, INK)
+	text_at(Vector2(270, 315), "PARACHUTE %d / 4" % (g.selected_chute + 1), 11, INK)
 	var progress: float = clampf(g.carousel_time / g.CAROUSEL_DURATION, 0, 1)
 	var eased := 1.0 - pow(1.0 - progress, 3)
 	var bounce := sin(progress * PI) * 12.0
@@ -583,7 +593,9 @@ func _flight_button_style(color: Color) -> StyleBoxFlat:
 
 func sync_ui() -> void:
 	g.home_button.visible = g.state != "menu"
-	for arrow in g.character_buttons:
+	g.home_button.position = Vector2(28, 873) if g.state in ["results", "podium"] else Vector2(438, 23)
+	g.home_button.size = Vector2(88, 56) if g.state in ["results", "podium"] else Vector2(82, 57)
+	for arrow in g.character_buttons + g.chute_buttons:
 		arrow.visible = g.state == "menu"
 	var flight: bool = g.state in ["countdown", "race", "settle"]
 	if flight:
@@ -612,8 +624,8 @@ func sync_ui() -> void:
 	elif g.state in ["results", "podium"]:
 		for label in [g.heading, g.detail, g.badge, g.stats]:
 			label.visible = false
-		g.action.position = Vector2(35, 866)
-		g.action.size = Vector2(470, 70)
+		g.action.position = Vector2(130, 866)
+		g.action.size = Vector2(382, 70)
 		g.action.disabled = false
 		g.action_hint.visible = false
 		if ui_mode != g.state:
@@ -745,10 +757,10 @@ func render_celebration() -> void:
 		g.draw_set_transform(Vector2(x, y), g.animation_time + k)
 		g.draw_rect(Rect2(-3, -6, 6, 12), g.COLORS[k % 4] if k % 3 else CORAL)
 	g.draw_set_transform_matrix(Transform2D.IDENTITY)
-	ink_box(Rect2(32, 85, 476, 111), CORAL, 26)
-	text_at(Vector2(270, 109), "FLIGHT CLUB CHAMPION" if final else "ROUND %d • FRESHLY LANDED" % g.round_number, 15, INK)
-	text_at(Vector2(270, 148), ("YOU TAKE THE CAKE!" if winner == 0 else g.NAMES[winner] + " TAKES THE CAKE!") if g.racers[winner].safe or final else "EVERYBODY IS TOAST!", 25, INK)
-	text_at(Vector2(270, 178), "Gravity: 0. Wobble: 1." if winner == 0 else "Please clap. Their arms are jelly.", 14, INK)
+	ink_box(Rect2(32, 24, 476, 111), CORAL, 26)
+	text_at(Vector2(270, 48), "FLIGHT CLUB CHAMPION" if final else "ROUND %d • FRESHLY LANDED" % g.round_number, 15, INK)
+	text_at(Vector2(270, 87), ("YOU TAKE THE CAKE!" if winner == 0 else g.NAMES[winner] + " TAKES THE CAKE!") if g.racers[winner].safe or final else "EVERYBODY IS TOAST!", 25, INK)
+	text_at(Vector2(270, 117), "Gravity: 0. Wobble: 1." if winner == 0 else "Please clap. Their arms are jelly.", 14, INK)
 	var tops := [387.0, 425.0, 450.0]
 	for rank in range(3):
 		var x: float = [270.0, 132.0, 408.0][rank]

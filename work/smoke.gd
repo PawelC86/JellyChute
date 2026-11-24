@@ -19,6 +19,7 @@ func run_checks() -> void:
 	_check_adaptation_and_gauge(game)
 	_check_career_points(game)
 	_check_character_selection(game)
+	_check_chute_selection(game)
 	_check_menu_return(game)
 	_check_difficulties(game)
 	_check_canopy_regions(game)
@@ -31,6 +32,10 @@ func run_checks() -> void:
 	_check_finish_reactions(game)
 	_check_hud(game)
 	_check_short_drop(game)
+	_check_first_landing_deadline(game)
+	_check_normal_finish_delay(game)
+	_check_race_clock_finish(game)
+	_check_cloud_continuity(game)
 	game._action()
 	assert(game.heading.text == "3")
 	assert(not game.heading.visible and not game.stats.visible)
@@ -581,3 +586,145 @@ func _check_adaptation_and_gauge(game) -> void:
 	game.rng.randomize()
 	game._return_to_menu()
 	print("PASS physics-matched red/green boundary at 30/60/120 FPS, gradual learning, recovery after losses and encrypted profile reload")
+
+func _check_first_landing_deadline(game) -> void:
+	for fps in [30, 60, 120]:
+		game._reset_racers()
+		game.state = "race"
+		game.racers[0].alt = 40.0
+		game.racers[0].open = true
+		game.racers[0].speed = 2.0
+		game.racers[0].deploy = 1.0
+		game.racers[1].alt = 0.0
+		game.racers[1].speed = 2.0
+		game._land(1)
+		var snapshot: Array[Dictionary] = game.racers.duplicate(true)
+		while game.race_time + 1.0 / fps < 3.0:
+			game._process(1.0 / fps)
+			assert(game.state == "race", "Must wait three seconds after the first landing")
+		while game.state == "race":
+			game._process(1.0 / fps)
+		assert(game.state == "settle" and not game.racers[0].done)
+		assert(game.racers[0].alt > 0.0)
+		var camera_before: float = game.camera_alt
+		game._process(0.3)
+		assert(game.camera_alt < camera_before)
+		game._process(game.CAMERA_SETTLE_DURATION - 0.3)
+		assert(game.state == "settle")
+		assert(is_equal_approx(game._ground_y(), 690.0))
+		game._process(game.GROUND_RESULTS_HOLD + 0.01)
+		assert(game.state == "results")
+		var resolved_order: Array[int] = game._ranked()
+		var resolved_time: float = game.racers[0].time
+		assert(game.racers[0].safe and resolved_time > 10.0)
+		game.racers = snapshot
+		game.finish_order.assign([1])
+		game.race_time = 0.0
+		game.state = "race"
+		while game.finish_order.size() < 4:
+			game.race_time += game.PHYSICS_STEP
+			game._advance_racers(game.PHYSICS_STEP)
+		assert(game._ranked() == resolved_order)
+		assert(absf(game.racers[0].time - resolved_time) < 0.05)
+		game._reset_racers()
+		assert(game.first_landing_time == -1.0)
+	game._return_to_menu()
+	print("PASS first-landing deadline, early-chute resolution, camera descent, ranking/time preservation and reset at 30/60/120 FPS")
+
+func _check_chute_selection(game) -> void:
+	game._return_to_menu()
+	game._select_character(1)
+	game.selected_chute = 0
+	assert(game.chute_buttons.size() == 2)
+	assert(game.chute_buttons[0].visible)
+	game.chute_buttons[0].pressed.emit()
+	assert(game.selected_chute == 3 and game.selected_character == 1)
+	game.chute_buttons[1].pressed.emit()
+	assert(game.selected_chute == 0)
+	game._cycle_chute(1)
+	game._select_character(2)
+	assert(game.selected_chute == 1 and game.chute_skin(0) == 1)
+	for slot in range(1,4):
+		assert(game.chute_skin(slot) == game.racer_skins[slot])
+	game._action()
+	assert(not game.chute_buttons[0].visible)
+	game._cycle_chute(1)
+	assert(game.selected_chute == 1, "Flight must lock appearance selection")
+	var restarted = load("res://main.tscn").instantiate()
+	root.add_child(restarted)
+	restarted.set_process(false)
+	assert(restarted.selected_character == 2 and restarted.selected_chute == 1)
+	restarted.free()
+	game._return_to_menu()
+	game.selected_chute = 3
+	game._load_record()
+	assert(game.selected_chute == 1, "Unconfirmed browsing must not overwrite saved configuration")
+	game._assign_characters()
+	game._reset_racers()
+	game._menu()
+	print("PASS independent chute arrows, wraparound, player-only skin, flight lock and saved jelly/chute restart")
+
+func _check_normal_finish_delay(game) -> void:
+	for fps in [30, 60, 120]:
+		game._reset_racers()
+		game.state = "race"
+		game.camera_alt = 0.0
+		for i in range(4):
+			game.racers[i].alt = 0.0
+			game.racers[i].speed = 2.0
+			game._land(i)
+		game._process(1.0 / fps)
+		assert(game.state == "settle")
+		assert(is_equal_approx(game.timer, game.NORMAL_FINISH_HOLD))
+		var elapsed := 0.0
+		while game.state == "settle":
+			game._process(1.0 / fps)
+			elapsed += 1.0 / fps
+		assert(game.state == "results" and elapsed < 0.85)
+	game._return_to_menu()
+	print("PASS all landed skips first-landing deadline and shows results after 0.8s at 30/60/120 FPS")
+
+func _check_cloud_continuity(game) -> void:
+	game._reset_racers()
+	game.state = "race"
+	game.camera_alt = 0.0
+	var before: Array[float] = []
+	for i in range(7):
+		before.append(game.toon_art.flight_cloud_y(i))
+	for i in range(4):
+		game.racers[i].alt = 0.0
+		game.racers[i].speed = 2.0
+		game._land(i)
+	game._process(1.0 / 60.0)
+	game._process(1.0 / 60.0)
+	assert(game.state == "settle")
+	for i in range(7):
+		assert(is_equal_approx(before[i], game.toon_art.flight_cloud_y(i)), "Clouds must not jump when the camera switches to settled ground height")
+	game._return_to_menu()
+	print("PASS cloud positions stay continuous across landing and settled camera height")
+
+func _check_race_clock_finish(game) -> void:
+	for mode in ["race", "settle"]:
+		game._reset_racers()
+		game.state = mode
+		game.camera_alt = game.CAMERA_LEAD_METRES
+		game.timer = 2.0
+		game.race_time = 7.0
+		for i in range(3):
+			game.racers[i].alt = 0.0
+			game.racers[i].speed = 2.0
+			game._land(i)
+		game.racers[3].alt = 0.01
+		game.racers[3].open = true
+		game.racers[3].deploy = 1.0
+		game.racers[3].speed = 2.0
+		game._process(1.0 / 60.0)
+		assert(game.finish_order.size() == 4)
+		var stopped: float = game.race_time
+		assert(stopped > 7.0 and is_equal_approx(stopped, game.racers[3].time))
+		game._process(0.2)
+		assert(is_equal_approx(game.race_time, stopped), "Race clock must stop after the last racer lands")
+	game._reset_racers()
+	assert(game.race_time == 0.0)
+	game._return_to_menu()
+	print("PASS race clock stops at final landing in race/settle and resets next round")

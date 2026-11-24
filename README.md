@@ -73,3 +73,11 @@ Safe landings briefly trigger an exaggerated chest-out, hands-on-hips proud pose
 The altitude gauge is a continuous green→orange→red gradient. Its red boundary is calculated from the same 120Hz parachute-inflation/braking integration used by gameplay; opening at terminal speed in the solid red region crashes. The fixed PULL marker is removed. Completed rounds update an encrypted player-skill profile using safe landings, deployment precision and placement. Skill changes by at most 0.08 per round; opponent deployment heights adapt only between rounds, preserving shuffled difficulty tiers and random form. Player physics and the gauge never change with skill.
 
 The tournament champion holds a gold two-handled trophy in the right hand. The cup is anchored to the arm’s animated grip and follows the winner’s bounce; round-result podiums do not award the tournament trophy.
+
+Three seconds after the first landing (safe or crash), the camera slides to ground over 1.6 seconds and holds for 2 seconds. Airborne racers keep flying outside the finish-line camera and are not teleported to the ground. Remaining classification is resolved with identical physics after this live view, before the results screen. The deadline resets each round.
+
+The project and Google Play icon is assets/icons/google-play.png: enlarged Mango without parachute on a full opaque turquoise square, 512x512 RGBA, sRGB, under 1MB. application/config/icon points to this asset. Separate transparent Mango foreground: assets/icons/android-foreground.png.
+
+The menu has separate upper arrows for four parachute designs and lower arrows for four jellies. Up/down changes the chute; left/right changes the jelly. CONFIRM & JUMP saves both choices together in the encrypted settings. Old saves default the chute to the saved character color. The chosen chute is used in the menu and flight; rivals retain their own canopies.
+
+Normal completed rounds go to results 0.8 seconds after all racers land, without waiting for the first-landing deadline. The 1.6-second camera descent and 2-second ground hold apply only when the camera actually has to scroll down to the finish line.

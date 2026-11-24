@@ -10,6 +10,12 @@ const ALTITUDE := 48.0
 const GRAVITY := 12.0
 const TERMINAL := 12.0
 const SAFE_SPEED := 2.5
+const FIRST_LANDING_DELAY := 3.0
+var first_landing_time := -1.0
+const CAMERA_SETTLE_DURATION := 1.6
+const GROUND_RESULTS_HOLD := 2.0
+const NORMAL_FINISH_HOLD := 0.8
+var settle_camera_offset := 0.0
 const PHYSICS_STEP := 1.0 / 120.0
 var red_altitude := 0.0
 var player_skill := 0.5
@@ -23,6 +29,8 @@ const CHARACTER_TRAITS := ["BORN TO SHINE", "HAPPILY CLUELESS", "DRAMA WITH STYL
 var COLORS: Array[Color] = [Color("ff779d"), Color("ffc857"), Color("a390ff"), Color("50dbbd")]
 var NAMES: Array[String] = ["YOU", "MANGO", "BUBBLES", "PICKLE"]
 var selected_character := 0
+var selected_chute := 0
+var chute_buttons: Array[Button] = []
 var character_confirmed := false
 var racer_skins: Array[int] = [0, 1, 2, 3]
 var character_buttons: Array[Button] = []
@@ -172,6 +180,17 @@ func _make_ui() -> void:
 		button.pressed.connect(_cycle_character.bind(direction))
 		ui.add_child(button)
 		character_buttons.append(button)
+	for direction in [-1, 1]:
+		var button := Button.new()
+		button.position = Vector2(42 if direction == -1 else 426, 346)
+		button.size = Vector2(72, 64)
+		button.text = "‹" if direction == -1 else "›"
+		button.tooltip_text = "Previous parachute" if direction == -1 else "Next parachute"
+		button.focus_mode = Control.FOCUS_NONE
+		button.add_theme_font_size_override("font_size", 42)
+		button.pressed.connect(_cycle_chute.bind(direction))
+		ui.add_child(button)
+		chute_buttons.append(button)
 
 func _label(x: float, y: float, width: float, height: float, font_size: int) -> Label:
 	var label := Label.new()
@@ -186,6 +205,7 @@ func _label(x: float, y: float, width: float, height: float, font_size: int) -> 
 
 func _reset_racers() -> void:
 	round_scored = false
+	first_landing_time = -1.0
 	racers.clear()
 	finish_order.clear()
 	particles.clear()
@@ -229,6 +249,10 @@ func _action() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if state == "menu" and event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode in [KEY_UP, KEY_DOWN]:
+			_cycle_chute(-1 if event.keycode == KEY_UP else 1)
+			get_viewport().set_input_as_handled()
+			return
 		if event.keycode in [KEY_LEFT, KEY_RIGHT]:
 			_cycle_character(-1 if event.keycode == KEY_LEFT else 1)
 			get_viewport().set_input_as_handled()
@@ -273,7 +297,7 @@ func _start_round() -> void:
 	toon_art.sync_ui()
 
 func _deploy(i: int) -> void:
-	if state != "race" or racers[i].open or racers[i].done:
+	if state not in ["race", "settle"] or racers[i].open or racers[i].done:
 		return
 	racers[i].deploy_altitude = float(racers[i].alt)
 	racers[i].deploy_speed = float(racers[i].speed)
@@ -297,7 +321,13 @@ func _process(delta: float) -> void:
 	jump_flash = maxf(0.0, jump_flash - delta)
 	timer -= delta
 	if state == "settle":
-		camera_alt = lerpf(camera_alt, 0.0, minf(1.0, delta * 18.0))
+		if finish_order.size() < racers.size():
+			race_time += delta
+		_advance_racers(delta)
+		var progress := clampf(1.0 - (timer - GROUND_RESULTS_HOLD) / CAMERA_SETTLE_DURATION, 0.0, 1.0)
+		# Quintic easing has zero velocity and acceleration at both ends.
+		var eased := progress * progress * progress * (progress * (progress * 6.0 - 15.0) + 10.0)
+		camera_alt = CAMERA_LEAD_METRES + settle_camera_offset * (1.0 - eased)
 	for r in racers:
 		if r.done:
 			r.finish_age += delta
@@ -330,44 +360,52 @@ func _process(delta: float) -> void:
 			action.text = "OPEN PARACHUTE"
 			_tone(880.0, 0.15)
 	elif state == "race":
-		race_time += delta
+		if finish_order.size() < racers.size():
+			race_time += delta
 		heading.text = "GO!" if jump_flash > 0.0 else ""
-		for i in range(4):
-			var r: Dictionary = racers[i]
-			if r.done:
-				continue
-			var remaining := delta
-			while remaining > 0.000001 and not r.done:
-				var step := minf(PHYSICS_STEP, remaining)
-				remaining -= step
-				if i > 0 and r.alt <= r.target:
-					_deploy(i)
-				if r.open:
-					r.deploy = minf(1.0, r.deploy + step / 0.65)
-					r.speed = move_toward(r.speed, 8.0 if r.alt > 35.0 else 2.0, 8.0 * r.deploy * step)
-				else:
-					r.speed = minf(TERMINAL, r.speed + GRAVITY * step)
-				r.alt = maxf(0.0, r.alt - r.speed * step)
-				if r.alt <= 0.0:
-					_land(i)
+		_advance_racers(delta)
 		var lowest := float(racers[0].alt)
 		if racers[0].done:
 			lowest = 0.0
 		camera_alt = lerpf(camera_alt, lowest, minf(1.0, delta * 18.0))
 		stats.text = "%.1f m   •   %.1f m/s   •   %.1f s\n%s" % [racers[0].alt, racers[0].speed, race_time, _flight_hint()]
-		if finish_order.size() == 4:
+		if finish_order.size() == 4 or (first_landing_time >= 0.0 and race_time - first_landing_time >= FIRST_LANDING_DELAY):
+			settle_camera_offset = maxf(camera_alt - CAMERA_LEAD_METRES, 0.0)
 			state = "settle"
-			timer = 2.2
-		elif race_time > 45.0:
-			# A very early chute must not stall the short round indefinitely.
-			for i in range(4):
-				if not racers[i].done:
-					racers[i].alt = 0.0
-					_land(i)
+			if settle_camera_offset > 0.05:
+				timer = CAMERA_SETTLE_DURATION + GROUND_RESULTS_HOLD
+			else:
+				settle_camera_offset = 0.0
+				timer = NORMAL_FINISH_HOLD
+			action.disabled = true
 	elif state == "settle" and timer <= 0.0:
+		# Resolve classification only after the live finish-line view ends.
+		while finish_order.size() < 4:
+			race_time += PHYSICS_STEP
+			_advance_racers(PHYSICS_STEP)
 		_results()
 	toon_art.sync_ui()
 	queue_redraw()
+
+func _advance_racers(delta: float) -> void:
+	for i in range(4):
+		var r: Dictionary = racers[i]
+		if r.done:
+			continue
+		var remaining := delta
+		while remaining > 0.000001 and not r.done:
+			var step := minf(PHYSICS_STEP, remaining)
+			remaining -= step
+			if i > 0 and r.alt <= r.target:
+				_deploy(i)
+			if r.open:
+				r.deploy = minf(1.0, r.deploy + step / 0.65)
+				r.speed = move_toward(r.speed, 8.0 if r.alt > 35.0 else 2.0, 8.0 * r.deploy * step)
+			else:
+				r.speed = minf(TERMINAL, r.speed + GRAVITY * step)
+			r.alt = maxf(0.0, r.alt - r.speed * step)
+			if r.alt <= 0.0:
+				_land(i)
 
 func _flight_hint() -> String:
 	if racers[0].done:
@@ -382,6 +420,8 @@ func _flight_hint() -> String:
 
 func _land(i: int) -> void:
 	var r: Dictionary = racers[i]
+	if finish_order.is_empty():
+		first_landing_time = race_time
 	r.done = true
 	r.safe = r.speed <= SAFE_SPEED
 	r.speed = 0.0
@@ -521,6 +561,7 @@ func _load_record() -> void:
 	wins = maxi(0, int(config.get_value("records", "wins", 0)))
 	career_points = maxi(0, int(config.get_value("records", "career_points", 0)))
 	selected_character = clampi(int(config.get_value("settings", "character", 0)), 0, 3)
+	selected_chute = clampi(int(config.get_value("settings", "chute", selected_character)), 0, 3)
 	character_confirmed = config.has_section_key("settings", "character")
 	player_skill = clampf(float(config.get_value("adaptive", "skill", 0.5)), 0, 1)
 	learned_rounds = maxi(0, int(config.get_value("adaptive", "rounds", 0)))
@@ -541,6 +582,7 @@ func _save_record() -> Error:
 	config.set_value("adaptive", "rounds", learned_rounds)
 	if character_confirmed:
 		config.set_value("settings", "character", selected_character)
+		config.set_value("settings", "chute", selected_chute)
 	var temporary := save_path + ".tmp"
 	var error := config.save_encrypted_pass(temporary, SAVE_PASSWORD)
 	if error == OK:
@@ -688,6 +730,17 @@ func _cycle_character(direction: int) -> void:
 		return
 	carousel_direction = 1.0 if direction > 0 else -1.0
 	_select_character(posmod(selected_character + direction, 4))
+
+func _cycle_chute(direction: int) -> void:
+	if state != "menu":
+		return
+	carousel_direction = 1.0 if direction > 0 else -1.0
+	carousel_time = 0.0
+	selected_chute = posmod(selected_chute + direction, 4)
+	queue_redraw()
+
+func chute_skin(slot: int) -> int:
+	return selected_chute if slot == 0 else racer_skins[slot]
 
 func _return_to_menu() -> void:
 	totals.assign([0, 0, 0, 0])
