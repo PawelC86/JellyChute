@@ -2,3 +2,12 @@
 *.apk
 *.aab
 export_credentials.cfg
+
+# Generated source art and local verification artifacts (not runtime assets).
+/work/source-art/
+/work/before-collection/
+/work/collection-previews/
+/work/shop-*.png*
+/work/menu-buttons.png*
+__pycache__/
+*.pyc

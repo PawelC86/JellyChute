@@ -64,7 +64,7 @@ Podium bubbles draw from 30 place-specific jokes and 12 character-specific jokes
 
 Round and tournament leaderboards use separate aligned rows, medal place markers, character portraits, player-coloured highlighting and explicit time/points headings. Countdown captions sit below the number inside a compact badge at y=263–292, with progress dots at y=307 above character accessories.
 
-CAREER POINTS on the main menu accumulates the player’s safe-round placement points across all tournaments and character choices. Completed rounds save their award immediately, with a guard against duplicate awards; crashes award zero. Returning to menu retains earned points. A gold star badge and a smoothly counting total sit above the confirmation button. Existing saves default the new total to zero.
+CREDITS on the main menu shows the spendable wallet. Each completed three-round tournament pays the sum of safe-round placement points once: 10/7/4/2 per round, zero for a crash. No credits or lifetime career points are paid during the first two rounds or for an abandoned tournament. Spending credits does not reduce lifetime career points. Old saves initialize the wallet from accumulated career points; a previously confirmed premium character is retained during migration.
 
 Progress uses Godot ConfigFile AES-256 encrypted saves at user://records.dat. Writes go to an encrypted temporary file, are verified by decryption, then replace the previous save. Existing user://records.cfg data is migrated automatically and plaintext is removed only after successful replacement. Unreadable saves are preserved and automatic overwrites are blocked. The application-held password protects against casual inspection/editing; it is not a server-side anti-cheat boundary. Tests and preview captures preserve both legacy and encrypted user files.
 
@@ -81,3 +81,21 @@ The project and Google Play icon is assets/icons/google-play.png: enlarged Mango
 The menu has separate upper arrows for four parachute designs and lower arrows for four jellies. Up/down changes the chute; left/right changes the jelly. CONFIRM & JUMP saves both choices together in the encrypted settings. Old saves default the chute to the saved character color. The chosen chute is used in the menu and flight; rivals retain their own canopies.
 
 Normal completed rounds go to results 0.8 seconds after all racers land, without waiting for the first-landing deadline. The 1.6-second camera descent and 2-second ground hold apply only when the camera actually has to scroll down to the finish line.
+
+## Additional jelly collection
+
+Nine additional painted jellies extend the original four: Sir Pounce (cat), Barkley (dog), Toasty (dragon), Sneaky Bean (ninja), Buzzbert (bee), Sir Sparkles (unicorn), Wobblebot (robot), Booberry (ghost), and Chef Wobble (chef). Owned characters can be previewed and confirmed in the existing character carousel; four unique racers still participate in each race. New selections persist with the existing encrypted progress format. Parachutes are selected independently; the four original canopies are free and nine additional cosmetics are available in the shop.
+
+The Jellies shop tab displays the nine new characters in three columns and three rows. Locked characters are dimmed and marked with a lock. Purchase buttons show 200/300/500-credit prices, then EQUIP or EQUIPPED after ownership. Cat, dog and unicorn cost 500; dragon, ninja and robot cost 300; bee, ghost and chef cost 200. Purchases validate funds and ownership and roll back if saving fails. Ads are not integrated. `assets/toon/collection/README.md` documents asset layout and optimization. `work/capture-collection.gd` verifies and captures all new characters in the menu, freefall, open-chute and crash states plus shop/podium views. Local source art and capture outputs are excluded from Git and Godot resource scanning.
+
+`work/economy-check.gd` verifies wallet migration, prices, purchase/equip states, insufficient funds, save rollback, locked carousel filtering, complete-tournament-only rewards, zero rewards for crashes, persistence and duplicate payout protection.
+
+## Purchasable parachutes
+
+The Parachutes shop tab contains Emergency Underpants, Holy Cow! and Flying Breakfast for 150 credits; Royal Flush, Definitely Safe, Disco Drop, Purrfect Landing and Woof Woof for 200; Bling Bling for 500. These are cosmetic canopies with unchanged flight physics. Each is a compact transparent painted PNG, maximum 384 x 256, documented in assets/toon/chutes/README.md.
+
+Owned parachutes persist separately from owned jellies. Both shops use BUY, EQUIP and EQUIPPED; successful purchases appear in the respective main-menu arrow selector, while locked items are skipped. Equipping in a shop saves immediately; browsing on the main menu saves only on CONFIRM & JUMP. Existing saves retain all four free canopies. work/chute-check.gd verifies purchases, insufficient funds, save rollback, fresh-instance reload, main-menu selection of purchased jellies and all nine parachutes, plus in-flight rendering and shop states.
+
+## Branded boot splash
+
+The engine boot splash uses assets/toon/boot-splash.png: the selected cream illustration with the JellyChute logo and the four jellies packing parachutes. The opaque PNG is downsampled to 800 x 1279 and uses lossless compression. Boot stretch mode Keep preserves the full illustration and its proportions; linear filtering is enabled. Uncovered screen areas use the sampled cream #fdf3db background. The engine default Godot image is replaced; no extra scene or artificial startup delay is added. Full-resolution source remains in the ignored splash-proposals preview folder. work/capture-boot-splash.gd validates the configured image and captures portrait, tall-phone and wider-screen layouts.

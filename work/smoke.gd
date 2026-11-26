@@ -10,8 +10,8 @@ func run_checks() -> void:
 	assert(game.toon_art.menu_decor.size() == 2)
 	assert(not game.heading.visible and not game.stats.visible)
 	assert(game.action.position == Vector2(48, 822))
-	assert(game.toon_art.bodies.size() == 4)
-	assert(game.toon_art.canopies.size() == 4)
+	assert(game.toon_art.bodies.size() == game.CHARACTER_NAMES.size())
+	assert(game.toon_art.canopies.size() == game.CHUTE_NAMES.size())
 	assert(game.toon_art.props.size() == 9)
 	for texture in game.toon_art.bodies + game.toon_art.canopies + game.toon_art.props:
 		assert(texture.get_width() > 0 and texture.get_height() > 0)
@@ -235,16 +235,18 @@ func _check_canopy_regions(game) -> void:
 	print("PASS full canopy silhouettes, separate atlas regions and filtered edges")
 
 func _check_character_selection(game) -> void:
+	var previous_owned: Array = game.owned_characters.duplicate()
+	game.owned_characters.assign(range(game.CHARACTER_NAMES.size()))
 	game.character_confirmed = false
 	game._menu()
 	assert(not game.action.disabled)
 	assert(game.character_buttons.size() == 2)
 	game._select_character(0)
 	game.character_buttons[0].pressed.emit()
-	assert(game.selected_character == 3 and game.carousel_direction == -1.0)
+	assert(game.selected_character == game.CHARACTER_NAMES.size() - 1 and game.carousel_direction == -1.0)
 	game.character_buttons[1].pressed.emit()
 	assert(game.selected_character == 0 and game.carousel_direction == 1.0)
-	for character in range(4):
+	for character in range(game.CHARACTER_NAMES.size()):
 		game._menu()
 		game._select_character(character)
 		assert(game.racer_skins[0] == character)
@@ -270,7 +272,7 @@ func _check_character_selection(game) -> void:
 	var restarted = load("res://main.tscn").instantiate()
 	root.add_child(restarted)
 	restarted.set_process(false)
-	assert(restarted.selected_character == 3 and restarted.racer_skins[0] == 3)
+	assert(restarted.selected_character == game.CHARACTER_NAMES.size() - 1 and restarted.racer_skins[0] == game.CHARACTER_NAMES.size() - 1)
 	restarted.free()
 	game._menu()
 	game._select_character(0)
@@ -283,6 +285,7 @@ func _check_character_selection(game) -> void:
 	game._assign_characters()
 	game._reset_racers()
 	game._menu()
+	game.owned_characters.assign(previous_owned)
 	print("PASS arrow wraparound, animated preview, explicit confirmation, persistence and left player lane")
 
 func _check_menu_return(game) -> void:
@@ -442,46 +445,52 @@ func _check_podium_dialogue(game) -> void:
 
 func _check_career_points(game) -> void:
 	var original: int = game.career_points
-	var original_character: int = game.selected_character
-	var expected: int = original
+	var original_credits: int = game.credits
+	var original_wins: int = game.wins
 	for place in range(4):
-		game._reset_racers()
-		var order: Array[int] = [1, 2, 3]
-		order.insert(place, 0)
-		game.finish_order.assign(order)
-		for slot in range(4):
-			game.racers[slot].done = true
-			game.racers[slot].safe = true
-			game.racers[slot].time = 7.0 + order.find(slot)
-		var learned_before: int = game.learned_rounds
-		game._results()
-		assert(game.learned_rounds == learned_before + 1)
-		expected += game.POINTS[place]
-		assert(game.career_points == expected)
-		game._results()
-		assert(game.career_points == expected, "A round must never award points twice")
-		assert(game.learned_rounds == learned_before + 1, "A round must train the profile only once")
-		game.career_points = 0
-		game._load_record()
-		assert(game.career_points == expected, "Career points must survive reload")
 		game._return_to_menu()
-		assert(game.career_points == expected)
+		var before: int = game.career_points
+		var wallet: int = game.credits
+		for round_index in range(1, 4):
+			game.round_number = round_index
+			game._reset_racers()
+			var order: Array[int] = [1, 2, 3]
+			order.insert(place, 0)
+			game.finish_order.assign(order)
+			for slot in range(4):
+				game.racers[slot].done = true
+				game.racers[slot].safe = true
+				game.racers[slot].time = 7.0 + order.find(slot)
+			var learned_before: int = game.learned_rounds
+			game._results()
+			var reward: int = game.POINTS[place] * 3 if round_index == 3 else 0
+			assert(game.career_points == before + reward)
+			assert(game.credits == wallet + reward)
+			game._results()
+			assert(game.career_points == before + reward)
+			assert(game.learned_rounds == learned_before + 1)
+		game._podium()
+		game._podium()
+		assert(game.career_points == before + game.POINTS[place] * 3)
+		game._load_record()
+		assert(game.credits == wallet + game.POINTS[place] * 3)
+	game._return_to_menu()
+	var balance: int = game.credits
+	game.round_number = 1
 	game._reset_racers()
 	game.finish_order.assign([0, 1, 2, 3])
-	for r in game.racers:
-		r.done = true
-		r.safe = false
+	for racer in game.racers:
+		racer.done = true
+		racer.safe = true
 	game._results()
-	assert(game.career_points == expected, "Crashes must not award career points")
 	game._return_to_menu()
-	game._select_character((original_character + 1) % 4)
-	assert(game.career_points == expected, "Points belong to the player across characters")
-	game._select_character(original_character)
+	assert(game.credits == balance, "An abandoned tournament must not pay credits")
 	game.career_points = original
-	game.displayed_career_points = original
-	game.totals.assign([0, 0, 0, 0])
+	game.credits = original_credits
+	game.wins = original_wins
+	game.displayed_career_points = original_credits
 	game._save_record()
-	print("PASS career score accumulation, all placements, no duplicate/crash awards, persistence and shared character total")
+	print("PASS tournament-only credits/career rewards, all placements, repeated result/podium protection, persistence and abandonment")
 
 func _check_encrypted_save(game) -> void:
 	var isolated = load("res://main.gd").new()
@@ -645,7 +654,7 @@ func _check_chute_selection(game) -> void:
 	game._select_character(2)
 	assert(game.selected_chute == 1 and game.chute_skin(0) == 1)
 	for slot in range(1,4):
-		assert(game.chute_skin(slot) == game.racer_skins[slot])
+		assert(game.chute_skin(slot) == game.racer_skins[slot] % 4)
 	game._action()
 	assert(not game.chute_buttons[0].visible)
 	game._cycle_chute(1)

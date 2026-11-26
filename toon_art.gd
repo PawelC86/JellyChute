@@ -1,13 +1,26 @@
 extends RefCounted
 ## Cartoon renderer matching the user-supplied inked reference.
 var game_ref: WeakRef
+var portrait_target: Node2D
+var shop_portrait_clips: Array[Control] = []
+var shop_buy_buttons: Array[Button] = []
+var shop_chute_buttons: Array[Button] = []
 var g: Node2D:
 	get:
+		if is_instance_valid(portrait_target):
+			return portrait_target
 		return game_ref.get_ref() as Node2D
 var bodies: Array[Texture2D] = []
 var canopies: Array[Texture2D] = []
 var arms: Array[Texture2D] = []
 var boots: Array[Texture2D] = []
+var collection_regions: Dictionary = {}
+var collection_heads: Array[Texture2D] = []
+var collection_extras: Array[Texture2D] = []
+const COLLECTION_IDS := ["cat", "dog", "dragon", "ninja", "bee", "unicorn", "robot", "ghost", "chef"]
+const HEAD_RECTS := [Rect2(-22, -87, 44, 28), Rect2(-35, -85, 70, 40), Rect2(-26, -94, 52, 34), Rect2(-28, -78, 56, 17), Rect2(-20, -99, 40, 35), Rect2(-24, -101, 48, 39), Rect2(-24, -93, 48, 34), Rect2(-12, -91, 24, 26), Rect2(-29, -109, 58, 46)]
+# Seat each painted headpiece into the scalp, rather than above the forehead.
+const HEAD_SEAT_Y := [-67.0, -67.0, -62.0, -59.0, -67.0, -62.0, -67.0, -67.0, -61.0]
 var props: Array[Texture2D] = []
 var landscape: Texture2D
 var sky: Texture2D
@@ -30,6 +43,16 @@ func _init(game: Node2D) -> void:
 		canopies.append(actors[4 + i])
 		arms.append(actors[8 + i])
 		boots.append(actors[12 + i])
+	collection_regions = preload("res://assets/toon/collection/atlas_regions.gd").REGIONS
+	for id in COLLECTION_IDS:
+		var pieces := _collection_atlas("res://assets/toon/collection/%s.png" % id)
+		bodies.append(pieces[0])
+		collection_heads.append(pieces[1])
+		arms.append(pieces[2])
+		boots.append(actors[12])
+		collection_extras.append(pieces[3])
+	for id in game.CHUTE_IDS:
+		canopies.append(load("res://assets/toon/chutes/%s.png" % id) as Texture2D)
 	props = _atlas("res://assets/toon/props.png", 3, 3)
 	landscape = load("res://assets/toon/landscape.png") as Texture2D
 	sky = load("res://assets/toon/sky.png") as Texture2D
@@ -39,6 +62,17 @@ func _init(game: Node2D) -> void:
 	bold.base_font = ThemeDB.fallback_font
 	bold.variation_embolden = 1.2
 	bold.variation_transform = Transform2D(Vector2(1, 0), Vector2(-0.18, 1), Vector2.ZERO)
+
+func _collection_atlas(path: String) -> Array[Texture2D]:
+	var texture := load(path) as Texture2D
+	var result: Array[Texture2D] = []
+	for bounds in collection_regions[path.get_file().get_basename()]:
+		var part := AtlasTexture.new()
+		part.atlas = texture
+		part.region = Rect2(bounds[0], bounds[1], bounds[2], bounds[3])
+		part.filter_clip = true
+		result.append(part)
+	return result
 
 func _actor_atlas() -> Array[Texture2D]:
 	# The painted sheet is not a uniform grid: canopies straddle column seams.
@@ -130,6 +164,7 @@ func button_style(tint: Color = Color.WHITE) -> StyleBoxTexture:
 	return style
 
 func configure_ui() -> void:
+	configure_shop_portraits()
 	secure_style = _flight_button_style(Color("8ee1c2"))
 	danger_style = _flight_button_style(Color("ff8f96"))
 	g.action.add_theme_stylebox_override("normal", button_style())
@@ -149,6 +184,17 @@ func configure_ui() -> void:
 		arrow.add_theme_stylebox_override("normal", _flight_button_style(CREAM))
 		arrow.add_theme_stylebox_override("hover", _flight_button_style(CORAL))
 		arrow.add_theme_stylebox_override("pressed", _flight_button_style(Color("ffb86b")))
+	for tab in g.shop_tabs:
+		tab.add_theme_font_override("font", bold)
+		tab.add_theme_font_size_override("font_size", 21)
+		for key in ["font_color", "font_hover_color", "font_pressed_color"]:
+			tab.add_theme_color_override(key, INK)
+		tab.add_theme_stylebox_override("hover", _flight_button_style(Color("ffe49b")))
+		tab.add_theme_stylebox_override("pressed", _flight_button_style(Color("ffb86b")))
+	for button in g.menu_side_buttons:
+		button.add_theme_stylebox_override("normal", _flight_button_style(CREAM))
+		button.add_theme_stylebox_override("hover", _flight_button_style(CORAL))
+		button.add_theme_stylebox_override("pressed", _flight_button_style(Color("ffb86b")))
 	for label in [g.heading, g.detail, g.badge]:
 		label.add_theme_color_override("font_color", INK)
 	g.heading.add_theme_font_override("font", bold)
@@ -163,6 +209,9 @@ func configure_ui() -> void:
 	g.home_button.add_theme_stylebox_override("pressed", _flight_button_style(Color("ffd181")))
 
 func render() -> void:
+	if g.state == "shop":
+		render_shop()
+		return
 	if g.state == "menu":
 		render_menu()
 		return
@@ -265,7 +314,7 @@ func cloud(pos: Vector2, size: float) -> void:
 	_sprite(texture, Rect2(pos - Vector2(68, 32) * size, Vector2(136, 64) * size))
 
 func pad(feet: Vector2, i: int) -> void:
-	var index: int = [3, 4, 5, 6][g.racer_skins[i]]
+	var index: int = [3, 4, 5, 6][g.racer_skins[i] % 4]
 	# Feet meet the top face 22% down the source oval, not the sprite bounds.
 	_sprite(props[index], Rect2(feet - Vector2(44, 7.6), Vector2(88, 34)))
 
@@ -314,13 +363,29 @@ func jelly(feet: Vector2, i: int, flight: bool, hero: bool = false, size: float 
 		var puff: float = sin(clampf((r.finish_age - 0.4) / 2.4, 0, 1) * PI)
 		stretch = Vector2(1 + puff * 0.1, 1 + puff * 0.08)
 		lean = sin(r.finish_age * 4) * 0.07
+	if skin >= 4 and g.state == "menu":
+		match skin:
+			4: # A slow feline stretch.
+				var purr := sin(g.animation_time * 1.8) * 0.035
+				stretch *= Vector2(1.0 - purr, 1.0 + purr)
+			5: # Eager little hops.
+				feet.y -= maxf(0, sin(g.animation_time * 4.2)) * 3.5
+			6: lean += sin(g.animation_time * 2.4) * 0.025
+			7: lean *= 0.35
+			8: feet.y += sin(g.animation_time * 5.0) * 2
+			9: lean += sin(g.animation_time * 1.9) * 0.025
+			10: lean = snappedf(lean, 0.025)
+			11: feet.y += sin(g.animation_time * 2.3) * 4
+			12: lean += sin(g.animation_time * 2.8) * 0.035
 	var root := Transform2D(lean, Vector2.ONE * size, 0, feet)
 	var body_root := root * Transform2D(0, stretch, 0, Vector2.ZERO)
 	var chute: bool = hero or (flight and r.open and not r.done)
 	g.draw_set_transform_matrix(root)
 	if chute:
 		chute_at(g.chute_skin(i), 1.0 if hero else float(r.deploy), clock)
-	# Cloth scarf follows airflow, attached behind the torso.
+	collection_extra(skin, clock, wind, body_root)
+	g.draw_set_transform_matrix(body_root)
+	# Cloth and ribbon roots follow the same squash/stretch as the torso.
 	var scarf_points := PackedVector2Array()
 	for k in range(10):
 		var t := k / 9.0
@@ -328,7 +393,8 @@ func jelly(feet: Vector2, i: int, flight: bool, hero: bool = false, size: float 
 	for k in range(9, -1, -1):
 		var t := k / 9.0
 		scarf_points.append(Vector2(13 + t * (25 - wind * 10) + sin(clock - t * 5) * 4 * wind, -25 - t * (8 + wind * 58)))
-	g.draw_colored_polygon(scarf_points, [Color("e64c8d"), Color("43bfbb"), Color("ffca39"), Color("a96ade")][skin])
+	var scarf_color: Color = [Color("e64c8d"), Color("43bfbb"), Color("ffca39"), Color("a96ade")][skin] if skin < 4 else g.CHARACTER_COLORS[skin].darkened(0.15)
+	g.draw_colored_polygon(scarf_points, scarf_color)
 	scarf_points.append(scarf_points[0])
 	g.draw_polyline(scarf_points, INK, 1.5, true)
 	for side in [-1, 1]:
@@ -416,7 +482,7 @@ func face(i: int, mood: String, clock: float) -> void:
 		elif eyes_are_closed(mood, i, side):
 			g.draw_arc(eye + Vector2(0, 4), 6.5, PI + 0.15, TAU - 0.15, 14, INK, 3, true)
 		else:
-			var scale_eye := 1.16 if (i == 1 and side == 1) else 1.0
+			var scale_eye := 0.85 if i == 7 else (1.16 if (i == 1 and side == 1) else 1.0)
 			g._ellipse(eye, Vector2(9, 11) * scale_eye, INK)
 			g._ellipse(eye, Vector2(7.4, 9.4) * scale_eye, CREAM)
 			var look := Vector2(look_x, 3.0 if mood == "disappointed" else 2.0 if worried else sin(g.animation_time + i))
@@ -430,12 +496,15 @@ func face(i: int, mood: String, clock: float) -> void:
 				look.x *= 0.25
 			g._ellipse(eye + look, Vector2(3.4, 5.5), INK)
 			g._ellipse(eye + look + Vector2(-1, -2), Vector2(1.3, 1.8), Color.WHITE)
-		g._ellipse(Vector2(side * 20, -36), Vector2(5.5, 3.8), Color("f08087"))
-		g._ellipse(Vector2(side * 21, -37), Vector2(1.5, 1.5), Color("ffbdad"))
+		if i != 7:
+			g._ellipse(Vector2(side * 20, -36), Vector2(5.5, 3.8), Color("f08087"))
+			g._ellipse(Vector2(side * 21, -37), Vector2(1.5, 1.5), Color("ffbdad"))
 		if worried:
 			g.draw_line(eye + Vector2(-5, -14 + side * 2), eye + Vector2(5, -14 - side * 2), INK, 2.6, true)
 		elif not happy:
 			g.draw_arc(eye + Vector2(0, -10), 5.5, PI + 0.3, TAU - 0.3, 12, INK, 2.3, true)
+	if i == 7:
+		return # The painted cloth mask hides cheeks and mouth; eyes carry the emotion.
 	if dizzy:
 		var mouth := PackedVector2Array()
 		for k in range(13):
@@ -477,6 +546,13 @@ func chute_at(i: int, deploy: float, clock: float) -> void:
 			g.draw_line(start + Vector2(1, 1), end + Vector2(1, 1), INK, 2.3, true)
 			g.draw_line(start, end, INK, 1.7, true)
 	_sprite(canopies[i], Rect2(Vector2(-54 * deploy + sway, -193 * deploy), Vector2(108, 72) * deploy))
+	if i == 9:
+		# Reflections stay inside the mirror canopy and follow inflation and sway.
+		var glints := [Vector2(-23, -167), Vector2(22, -150), Vector2(5, -179)]
+		for k in range(glints.size()):
+			var pulse := maxf(0.0, sin(clock * 1.7 + k * 2.1))
+			g._star(glints[k] * deploy + Vector2(sway, 0), (1.0 + pulse * 2.2) * deploy, Color("fff9ea"))
+
 
 func bird(pos: Vector2, phase: float) -> void:
 	g.draw_set_transform(pos, sin(phase) * 0.12, Vector2(1, 1 + sin(phase) * 0.12))
@@ -515,7 +591,7 @@ func expression_for(i: int, flight: bool, hero: bool = false) -> String:
 	if r.done and g.state in ["race", "settle", "results", "podium"]:
 		return reaction_for(i)
 	if hero:
-		return ["excited", "confident", "concerned", "relief"][g.racer_skins[i]] if g.state == "menu" else "victory"
+		return ["excited", "confident", "concerned", "relief"][g.racer_skins[i] % 4] if g.state == "menu" else "victory"
 	if not flight or g.state == "countdown":
 		return "excited"
 	if r.open:
@@ -552,19 +628,22 @@ func render_menu() -> void:
 	# Logo, character art, chooser and records have separate vertical bands.
 	_sprite(logo, Rect2(30, 34 + sin(t * 1.1) * 2, 480, 240))
 	text_at(Vector2(270, 291), "CHOOSE YOUR JELLY", 20, INK)
-	text_at(Vector2(270, 315), "PARACHUTE %d / 4" % (g.selected_chute + 1), 11, INK)
+	text_at(Vector2(270, 315), "%s • %d / %d" % [g.CHUTE_NAMES[g.selected_chute], g.selected_chute + 1, g.CHUTE_NAMES.size()], 11, INK)
 	var progress: float = clampf(g.carousel_time / g.CAROUSEL_DURATION, 0, 1)
 	var eased := 1.0 - pow(1.0 - progress, 3)
 	var bounce := sin(progress * PI) * 12.0
 	var position := Vector2(270 + g.carousel_direction * (1 - eased) * 78 + sin(t * 0.7) * 3, 594 + sin(t * 1.5) * 4 - bounce)
 	jelly(position, 0, false, true, 1.38 * (0.78 + 0.22 * eased + sin(progress * PI * 2) * 0.035))
 	ink_box(Rect2(150, 616, 240, 43), CREAM, 18)
-	text_at(Vector2(270, 637), g.CHARACTER_NAMES[g.selected_character], 23, INK)
+	var name_size := 23
+	while bold.get_string_size(g.CHARACTER_NAMES[g.selected_character], HORIZONTAL_ALIGNMENT_LEFT, -1, name_size).x > 218:
+		name_size -= 1
+	text_at(Vector2(270, 637), g.CHARACTER_NAMES[g.selected_character], name_size, INK)
 	text_at(Vector2(270, 686), g.CHARACTER_TRAITS[g.selected_character], 15, INK)
-	for character in range(4):
-		var center := Vector2(237 + character * 22, 721)
+	for character in range(g.CHARACTER_NAMES.size()):
+		var center := Vector2(270 + (character - (g.CHARACTER_NAMES.size() - 1) * 0.5) * 22, 721)
 		g._ellipse(center, Vector2(7, 7) if character == g.selected_character else Vector2(5, 5), INK)
-		g._ellipse(center, Vector2(4.5, 4.5) if character == g.selected_character else Vector2(3, 3), g.CHARACTER_COLORS[character])
+		g._ellipse(center, Vector2(4.5, 4.5) if character == g.selected_character else Vector2(3, 3), g.CHARACTER_COLORS[character] if g.owns_character(character) else Color("b5b1bc"))
 	draw_career_points()
 
 func eyes_are_closed(mood: String, i: int, side: int) -> bool:
@@ -591,12 +670,98 @@ func _flight_button_style(color: Color) -> StyleBoxFlat:
 	style.shadow_size = 1
 	return style
 
+func configure_shop_portraits() -> void:
+	for index in range(COLLECTION_IDS.size()):
+		var clip := Control.new()
+		clip.name = "ShopPortraitClip%d" % index
+		clip.position = Vector2(47 + (index % 3) * 152, 297 + floori(index / 3.0) * 200)
+		clip.size = Vector2(138, 130)
+		clip.clip_contents = true
+		clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var portrait := preload("res://shop_portrait.gd").new()
+		portrait.art = self
+		portrait.skin = index + 4
+		clip.add_child(portrait)
+		g.ui.add_child(clip)
+		shop_portrait_clips.append(clip)
+		var buy := Button.new()
+		buy.name = "ShopBuy%d" % index
+		buy.position = clip.position + Vector2(9, 154)
+		buy.size = Vector2(120, 27)
+		buy.focus_mode = Control.FOCUS_NONE
+		buy.add_theme_font_override("font", bold)
+		buy.add_theme_font_size_override("font_size", 12)
+		for key in ["font_color", "font_hover_color", "font_pressed_color", "font_disabled_color"]:
+			buy.add_theme_color_override(key, INK)
+		buy.add_theme_stylebox_override("normal", _flight_button_style(CORAL))
+		buy.add_theme_stylebox_override("hover", _flight_button_style(Color("ffe49b")))
+		buy.add_theme_stylebox_override("pressed", _flight_button_style(Color("ffb86b")))
+		buy.add_theme_stylebox_override("disabled", _flight_button_style(Color("ddd6cb")))
+		buy.pressed.connect(g._shop_character_action.bind(index + 4))
+		g.ui.add_child(buy)
+		shop_buy_buttons.append(buy)
+
+	for index in range(g.CHUTE_IDS.size()):
+		var slot: int = g.CHUTE_SHOP_ORDER.find(index + 4)
+		var buy := Button.new()
+		buy.name = "ShopChuteBuy%d" % index
+		buy.position = Vector2(56 + (slot % 3) * 152, 451 + floori(slot / 3.0) * 200)
+		buy.size = Vector2(120, 27)
+		buy.focus_mode = Control.FOCUS_NONE
+		buy.add_theme_font_override("font", bold)
+		buy.add_theme_font_size_override("font_size", 12)
+		for key in ["font_color", "font_hover_color", "font_pressed_color", "font_disabled_color"]:
+			buy.add_theme_color_override(key, INK)
+		buy.add_theme_stylebox_override("normal", _flight_button_style(CORAL))
+		buy.add_theme_stylebox_override("hover", _flight_button_style(Color("ffe49b")))
+		buy.add_theme_stylebox_override("pressed", _flight_button_style(Color("ffb86b")))
+		buy.add_theme_stylebox_override("disabled", _flight_button_style(Color("ddd6cb")))
+		buy.pressed.connect(g._shop_chute_action.bind(index + 4))
+		g.ui.add_child(buy)
+		shop_chute_buttons.append(buy)
+
 func sync_ui() -> void:
+	var shopping: bool = g.state == "shop"
+	for clip in shop_portrait_clips:
+		clip.visible = shopping and g.shop_category == 0
+		if clip.visible:
+			var portrait := clip.get_child(0)
+			portrait.animation_time = g.animation_time
+			portrait.queue_redraw()
+	for index in range(shop_buy_buttons.size()):
+		var skin := index + 4
+		var owned: bool = g.owns_character(skin)
+		var buy: Button = shop_buy_buttons[index]
+		buy.visible = shopping and g.shop_category == 0
+		buy.text = ("EQUIPPED" if g.selected_character == skin else "EQUIP") if owned else "BUY  %d" % g.CHARACTER_PRICES[skin]
+		buy.disabled = (g.selected_character == skin) if owned else g.credits < g.CHARACTER_PRICES[skin]
+		buy.tooltip_text = ("Owned" if owned else ("%d more credits needed" % (g.CHARACTER_PRICES[skin] - g.credits) if buy.disabled else "Unlock this jelly"))
+		shop_portrait_clips[index].modulate = Color.WHITE if owned else Color(0.72, 0.72, 0.78, 1)
+	for index in range(shop_chute_buttons.size()):
+		var chute := index + 4
+		var owned: bool = g.owns_chute(chute)
+		var buy: Button = shop_chute_buttons[index]
+		buy.visible = shopping and g.shop_category == 1
+		buy.text = ("EQUIPPED" if g.selected_chute == chute else "EQUIP") if owned else "BUY  %d" % g.CHUTE_PRICES[chute]
+		buy.disabled = (g.selected_chute == chute) if owned else g.credits < g.CHUTE_PRICES[chute]
+		buy.tooltip_text = "Owned" if owned else ("%d more credits needed" % (g.CHUTE_PRICES[chute] - g.credits) if buy.disabled else "Unlock this parachute")
+	g.action.visible = not shopping
+	for i in range(g.shop_tabs.size()):
+		g.shop_tabs[i].visible = shopping
+		g.shop_tabs[i].add_theme_stylebox_override("normal", _flight_button_style(CORAL if i == g.shop_category else CREAM))
+	for button in g.menu_side_buttons:
+		button.visible = g.state == "menu"
 	g.home_button.visible = g.state != "menu"
 	g.home_button.position = Vector2(28, 873) if g.state in ["results", "podium"] else Vector2(438, 23)
 	g.home_button.size = Vector2(88, 56) if g.state in ["results", "podium"] else Vector2(82, 57)
 	for arrow in g.character_buttons + g.chute_buttons:
 		arrow.visible = g.state == "menu"
+	if shopping:
+		g.home_button.position = Vector2(28, 28)
+		g.home_button.size = Vector2(100, 56)
+		for label in [g.heading, g.detail, g.badge, g.stats]:
+			label.visible = false
+		return
 	var flight: bool = g.state in ["countdown", "race", "settle"]
 	if flight:
 		g.heading.visible = false
@@ -771,7 +936,7 @@ func render_celebration() -> void:
 		podium_gag(Vector2(x, top), rank)
 		pill(Vector2(x, 531), g.NAMES[order[rank]], order[rank] == 0)
 	draw_results_table(order, final)
-	text_at(Vector2(270, 817), "Small jelly. Huge ego." if winner == 0 else "Still more aerodynamic than a sandwich.", 15, INK)
+	text_at(Vector2(270, 817), ("+%d CREDITS • TOURNAMENT COMPLETE" % g.tournament_reward) if final and g.tournament_paid else "CREDITS PAID AFTER ALL 3 ROUNDS", 13, INK)
 	text_at(Vector2(270, 842), "WINS %d   •   BEST %s" % [g.wins, g._time_text(g.best_time)] if final else "Soft landings score points. Pancakes score sympathy.", 12, INK)
 
 # Separate phases keep the podium readable while each jelly has its own routine.
@@ -835,6 +1000,9 @@ func podium_gag(feet: Vector2, rank: int) -> void:
 		g._ellipse(drop, Vector2(3, 5), Color(0.64, 0.89, 1.0, 1.0 - phase))
 
 func personality_mouth(i: int, clock: float) -> void:
+	if i >= 4:
+		collection_mouth(i, clock)
+		return
 	match i:
 		0: # A lopsided movie-star grin.
 			g.draw_arc(Vector2(1, -36), 11, 0.1, PI - 0.38, 18, INK, 3, true)
@@ -852,6 +1020,9 @@ func personality_mouth(i: int, clock: float) -> void:
 
 func character_accessories(i: int, mood: String, clock: float) -> void:
 	var alarm: bool = mood in ["panic", "concerned", "surprised", "dizzy", "disappointed"]
+	if i >= 4:
+		collection_accessories(i, mood, clock)
+		return
 	match i:
 		0: # Pink: rooted fringe, with tips fluttering in the actual airflow.
 			var star_slot: int = g.racer_skins.find(0)
@@ -996,7 +1167,7 @@ func draw_career_points() -> void:
 	g.draw_arc(center, 16, PI * 1.05, PI * 1.75, 20, Color("fff5bb"), 2.5, true)
 	g._star(center, 12, INK)
 	g._star(center, 9, Color("ffe891"))
-	text_at(Vector2(295, 761), "CAREER POINTS", 10, INK)
+	text_at(Vector2(295, 761), "CREDITS", 10, INK)
 	var content := str(floori(g.displayed_career_points))
 	var size := 25
 	while size > 13 and bold.get_string_size(content, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > 158:
@@ -1022,3 +1193,167 @@ func draw_winner_cup() -> void:
 	g._star(Vector2(0, -28), 5.5, CREAM)
 	var sparkle := 0.7 + sin(g.animation_time * 5) * 0.3
 	g._star(Vector2(18, -42), 4 * sparkle, CREAM)
+
+func render_shop() -> void:
+	# A dedicated full-screen view; inventory will be designed separately.
+	g.draw_rect(Rect2(0, 0, 540, 960), Color("28bee0"))
+	g.draw_texture_rect(sky, Rect2(0, 0, 540, 960), false)
+	_sprite(landscape, Rect2(0, 560, 540, 780))
+	text_at(Vector2(270, 58), "JELLY SHOP", 30, INK)
+	ink_box(Rect2(118, 103, 304, 65), CREAM, 22)
+	var center := Vector2(153, 135)
+	g._ellipse(center, Vector2(21, 21), INK)
+	g._ellipse(center, Vector2(18, 18), CORAL)
+	g._star(center, 11, INK)
+	g._star(center, 8, Color("ffe891"))
+	text_at(Vector2(285, 120), "AVAILABLE CREDITS", 10, INK)
+	var amount := str(g.credits)
+	var font_size := 26
+	while font_size > 12 and bold.get_string_size(amount, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > 210:
+		font_size -= 1
+	text_at(Vector2(285, 148), amount, font_size, INK)
+	ink_box(Rect2(28, 278, 484, 634), CREAM, 26)
+	if g.shop_category == 1:
+		for index in range(g.CHUTE_IDS.size()):
+			var chute: int = g.CHUTE_SHOP_ORDER[index]
+			var top_left := Vector2(44 + (index % 3) * 152, 294 + floori(index / 3.0) * 200)
+			var owned: bool = g.owns_chute(chute)
+			ink_box(Rect2(top_left, Vector2(144, 192)), CREAM, 16)
+			_sprite(canopies[chute], Rect2(top_left + Vector2(12, 36), Vector2(120, 80)), Color.WHITE if owned else Color(0.72, 0.72, 0.78, 1))
+			if not owned:
+				var lock := top_left + Vector2(123, 20)
+				g._ellipse(lock, Vector2(13, 13), CREAM)
+				g.draw_arc(lock + Vector2(0, -2), 4, PI, TAU, 14, INK, 2, true)
+				ink_box(Rect2(lock + Vector2(-6, -2), Vector2(12, 10)), CORAL, 3)
+				g.draw_line(lock + Vector2(0, 1), lock + Vector2(0, 4), INK, 1.5, true)
+			var words: PackedStringArray = g.CHUTE_NAMES[chute].split(" ", false, 1)
+			text_at(top_left + Vector2(72, 131), words[0], 13, INK)
+			text_at(top_left + Vector2(72, 146), words[1], 13, INK)
+	if g.shop_category == 0:
+		for index in range(COLLECTION_IDS.size()):
+			var skin := index + 4
+			var top_left := Vector2(44 + (index % 3) * 152, 294 + floori(index / 3.0) * 200)
+			ink_box(Rect2(top_left, Vector2(144, 192)), g.CHARACTER_COLORS[skin].lightened(0.76), 16)
+			if not g.owns_character(skin):
+				var lock := top_left + Vector2(123, 20)
+				g._ellipse(lock, Vector2(13, 13), CREAM)
+				g.draw_arc(lock + Vector2(0, -2), 4, PI, TAU, 14, INK, 2, true)
+				ink_box(Rect2(lock + Vector2(-6, -2), Vector2(12, 10)), CORAL, 3)
+				g.draw_line(lock + Vector2(0, 1), lock + Vector2(0, 4), INK, 1.5, true)
+			var name_size := 14
+			while bold.get_string_size(g.CHARACTER_NAMES[skin], HORIZONTAL_ALIGNMENT_LEFT, -1, name_size).x > 130:
+				name_size -= 1
+			text_at(top_left + Vector2(72, 145), g.CHARACTER_NAMES[skin], name_size, INK)
+	if not g.shop_message.is_empty():
+		text_at(Vector2(270, 899), g.shop_message, 11, INK)
+
+
+func collection_extra_parts(skin: int, clock: float, wind: float) -> Array[Dictionary]:
+	var parts: Array[Dictionary] = []
+	match skin:
+		4, 5, 9, 11:
+			var wag := sin(clock * (1.8 if skin == 5 else 0.65)) * (0.32 if skin == 5 else 0.15)
+			var rect := Rect2(0, -34, 40, 38) if skin == 4 else Rect2(0, -17, 35, 27)
+			if skin == 11:
+				rect = Rect2(-2, -12, 43, 24)
+			parts.append({"transform": Transform2D(wag - wind * 0.25, Vector2(20, -18)), "rect": rect})
+		6, 8:
+			for side in [-1, 1]:
+				var flutter := sin(clock * (3.4 if skin == 8 else 1.5))
+				var wing_scale := Vector2(side, 0.75 + flutter * 0.2)
+				parts.append({"transform": Transform2D(side * flutter * 0.14, wing_scale, 0, Vector2(side * 20, -44)), "rect": Rect2(0, -25, 39 if skin == 6 else 31, 37)})
+		7:
+			parts.append({"transform": Transform2D(-0.12 - wind * 0.6 + sin(clock * 1.4) * 0.12, Vector2(24, -65)), "rect": Rect2(-2, -9, 48, 21)})
+		10:
+			parts.append({"transform": Transform2D(0, Vector2(1, 0.65 + absf(cos(clock)) * 0.35), 0, Vector2(23, -38)), "rect": Rect2(0, -9, 23, 18)})
+	return parts
+
+func collection_extra(skin: int, clock: float, wind: float, base: Transform2D) -> void:
+	if skin < 4 or skin == 12:
+		return
+	for part in collection_extra_parts(skin, clock, wind):
+		g.draw_set_transform_matrix(base * part.transform)
+		_sprite(collection_extras[skin - 4], part.rect)
+	g.draw_set_transform_matrix(base)
+
+func collection_head_rect(skin: int) -> Rect2:
+	var rect: Rect2 = HEAD_RECTS[skin - 4]
+	var contact: float = preload("res://assets/toon/collection/atlas_regions.gd").HEAD_CONTACT_RATIOS[skin - 4]
+	rect.position.y = HEAD_SEAT_Y[skin - 4] - rect.size.y * contact
+	return rect
+
+func collection_accessories(skin: int, mood: String, clock: float) -> void:
+	var rect := collection_head_rect(skin)
+	var alarm: bool = mood in ["panic", "concerned", "surprised", "dizzy", "disappointed"]
+	# Hood and band use the same body transform, with no independent translation.
+	_sprite(collection_heads[skin - 4], rect)
+	match skin:
+		4:
+			var nose := PackedVector2Array([Vector2(-3, -37), Vector2(3, -37), Vector2(0, -34), Vector2(-3, -37)])
+			g.draw_colored_polygon(nose, Color("9e4663"))
+			g.draw_line(Vector2(0, -35), Vector2(0, -31), INK, 1.4, true)
+			for side in [-1, 1]:
+				for whisker in range(3):
+					g.draw_line(Vector2(side * 17, -36 + whisker * 3), Vector2(side * 31, -39 + whisker * 6), INK, 1.2, true)
+		5:
+			g._ellipse(Vector2(0, -36), Vector2(5, 3.5), INK)
+			g._ellipse(Vector2(-1, -37), Vector2(1.7, 0.8), CREAM)
+			if not alarm:
+				g._ellipse(Vector2(2, -25), Vector2(3, 5), Color("f690a0"))
+		6:
+			if not alarm:
+				for side in [-1, 1]:
+					g.draw_colored_polygon(PackedVector2Array([Vector2(side * 6 - 2, -33), Vector2(side * 6 + 2, -33), Vector2(side * 6, -28)]), CREAM)
+		7:
+			pass # Hood and lower mask are painted into the torso: they cannot detach.
+		8:
+			g._ellipse(Vector2(0, -37), Vector2(2.5, 2), Color("a76332"))
+		9:
+			for side in [-1, 1]:
+				g._star(Vector2(side * 21, -38), 3.2, Color("fff1a8"))
+		10:
+			for side in [-1, 1]:
+				g.draw_line(Vector2(side * 18, -52), Vector2(side * 23, -52), INK, 1.5, true)
+				g._ellipse(Vector2(side * 23, -52), Vector2(1.8, 1.8), CORAL)
+		11:
+			if alarm:
+				g._ellipse(Vector2(0, -31), Vector2(5, 7), INK)
+		12:
+			_sprite(collection_extras[skin - 4], Rect2(-17, -24, 34, 16))
+			for side in [-1, 1]:
+				g.draw_arc(Vector2(side * 4, -36), 5, 0.1, PI - 0.1, 12, INK, 2.5, true)
+
+func collection_mouth(skin: int, clock: float) -> void:
+	match skin:
+		4:
+			for side in [-1, 1]:
+				g.draw_arc(Vector2(side * 3.5, -33), 4, 0.1, PI - 0.1, 12, INK, 1.8, true)
+		5, 6, 8, 12:
+			g._ellipse(Vector2(0, -30), Vector2(8, 7), INK)
+			g._ellipse(Vector2(1, -27), Vector2(5, 2.5), Color("ef7097"))
+			if skin == 8:
+				g.draw_rect(Rect2(-3, -36, 6, 4), CREAM)
+		9:
+			g.draw_arc(Vector2(0, -35), 8, 0.1, PI - 0.15, 16, INK, 2.6, true)
+		10:
+			ink_box(Rect2(-8, -35, 16, 8), CREAM, 2)
+			for x in [-3, 3]:
+				g.draw_line(Vector2(x, -34), Vector2(x, -28), INK, 1, true)
+		11:
+			g._ellipse(Vector2(0, -30), Vector2(5, 6 + sin(clock) * 0.8), INK)
+
+func collection_portrait(skin: int, feet: Vector2, size: float) -> void:
+	# Preserve identical body alignment and scale; the card clips free accessories.
+	var base := Transform2D(0, Vector2.ONE * size, 0, feet)
+	var clock: float = g.animation_time * 5 + skin
+	g.draw_set_transform_matrix(base)
+	collection_extra(skin, clock, 0, base)
+	for side in [-1, 1]:
+		g.draw_set_transform_matrix(base * Transform2D(side * -0.3, Vector2(side * 23, -31)))
+		_sprite(arms[skin], Rect2(-6, -2, 12, 29))
+		g.draw_set_transform_matrix(base)
+		_sprite(boots[skin], Rect2(side * 14 - 6, -11, 12, 12))
+	_sprite(bodies[skin], Rect2(-28, -70, 56, 65))
+	face(skin, "excited", clock)
+	character_accessories(skin, "excited", clock)
+	g.draw_set_transform_matrix(Transform2D.IDENTITY)

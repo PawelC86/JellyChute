@@ -1,0 +1,5 @@
+{
+  "tool": "built-in image_gen",
+  "prompt": "Use case: precise-object-edit. Edit target: this transparent 2x2 game atlas. Change ONLY the chef hat in the TOP RIGHT quadrant. Preserve the exact other three sprites (red blank-face gummy torso with brown harness, red arm, red neckerchief), their colors, shapes, positions and transparent background. The hat must be a front-facing cream puffy chef toque as worn snugly ON a character's head. Remove the visible underside/inner oval at bottom: NO bottom opening, NO rear rim, NO visible interior, NO underside ellipse. Its lower edge must be a single shallow convex downward-curved opaque cream front band with dark plum outline, suitable to overlap the forehead. Keep the same puffy three-lobed top, painterly gouache texture, cream highlights, plum outlines and soft lavender shading. Keep the hat entirely within top-right quadrant with transparent gaps. Exactly 4 parts in same 2x2 layout. No letters. True transparent background with ZERO alpha outside sprites, no haze, no gray backdrop, no checkerboard. Do not change torso, arm or neckerchief.",
+  "runtime": "assets/toon/collection/chef.png"
+}

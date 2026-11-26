@@ -1,0 +1,119 @@
+[
+  {
+    "id": "cat",
+    "original_size": [
+      1254,
+      1254
+    ],
+    "original_bytes": 856281,
+    "runtime_size": [
+      512,
+      512
+    ],
+    "runtime_bytes": 167283
+  },
+  {
+    "id": "dog",
+    "original_size": [
+      1254,
+      1254
+    ],
+    "original_bytes": 696923,
+    "runtime_size": [
+      512,
+      512
+    ],
+    "runtime_bytes": 135196
+  },
+  {
+    "id": "dragon",
+    "original_size": [
+      1254,
+      1254
+    ],
+    "original_bytes": 898277,
+    "runtime_size": [
+      512,
+      512
+    ],
+    "runtime_bytes": 174692
+  },
+  {
+    "id": "ninja",
+    "original_size": [
+      1254,
+      1254
+    ],
+    "original_bytes": 772413,
+    "runtime_size": [
+      512,
+      512
+    ],
+    "runtime_bytes": 156693
+  },
+  {
+    "id": "bee",
+    "original_size": [
+      1254,
+      1254
+    ],
+    "original_bytes": 823900,
+    "runtime_size": [
+      512,
+      512
+    ],
+    "runtime_bytes": 163069
+  },
+  {
+    "id": "unicorn",
+    "original_size": [
+      1254,
+      1254
+    ],
+    "original_bytes": 943555,
+    "runtime_size": [
+      512,
+      512
+    ],
+    "runtime_bytes": 185865
+  },
+  {
+    "id": "robot",
+    "original_size": [
+      1254,
+      1254
+    ],
+    "original_bytes": 969558,
+    "runtime_size": [
+      512,
+      512
+    ],
+    "runtime_bytes": 186379
+  },
+  {
+    "id": "ghost",
+    "original_size": [
+      1254,
+      1254
+    ],
+    "original_bytes": 729503,
+    "runtime_size": [
+      512,
+      512
+    ],
+    "runtime_bytes": 144093
+  },
+  {
+    "id": "chef",
+    "original_size": [
+      1254,
+      1254
+    ],
+    "original_bytes": 876843,
+    "runtime_size": [
+      512,
+      512
+    ],
+    "runtime_bytes": 179744
+  }
+]

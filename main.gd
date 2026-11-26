@@ -23,13 +23,18 @@ var learned_rounds := 0
 var round_player_skill := 0.5
 const OPTIMAL_LOW := 16.0
 const OPTIMAL_HIGH := 21.0
-const CHARACTER_COLORS := [Color("ff779d"), Color("ffc857"), Color("a390ff"), Color("50dbbd")]
-const CHARACTER_NAMES := ["STAR", "MANGO", "BUBBLES", "PICKLE"]
-const CHARACTER_TRAITS := ["BORN TO SHINE", "HAPPILY CLUELESS", "DRAMA WITH STYLE", "PROFESSIONALLY CHILL"]
+const CHARACTER_COLORS := [Color("ff779d"), Color("ffc857"), Color("a390ff"), Color("50dbbd"), Color("f5a66b"), Color("c99157"), Color("f67b76"), Color("5265a0"), Color("f3bc38"), Color("c6a4ed"), Color("98d4ca"), Color("b9e8f4"), Color("f16b7e")]
+const CHARACTER_NAMES := ["STAR", "MANGO", "BUBBLES", "PICKLE", "SIR POUNCE", "BARKLEY", "TOASTY", "SNEAKY BEAN", "BUZZBERT", "SIR SPARKLES", "WOBBLEBOT", "BOOBERRY", "CHEF WOBBLE"]
+const CHARACTER_TRAITS := ["BORN TO SHINE", "HAPPILY CLUELESS", "DRAMA WITH STYLE", "PROFESSIONALLY CHILL", "NINE LIVES. ONE CHUTE.", "GOOD DOG. GREAT DROP.", "SMALL WINGS. BIG BRAVERY.", "SILENT BUT WOBBLY", "TOO SWEET TO STING", "RAINBOWS BEFORE GRAVITY", "SOFT BODY. SMART CIRCUITS.", "BOO! ALSO: AAAH!", "FIVE-STAR FREEFALL"]
 var COLORS: Array[Color] = [Color("ff779d"), Color("ffc857"), Color("a390ff"), Color("50dbbd")]
 var NAMES: Array[String] = ["YOU", "MANGO", "BUBBLES", "PICKLE"]
 var selected_character := 0
+const CHUTE_IDS := ["underpants", "cow", "royal", "breakfast", "patched", "disco", "bling", "cat", "dog"]
+const CHUTE_NAMES := ["STARFALL", "SUNNY SIDE", "CLOUD NINE", "CHECKMATE", "EMERGENCY UNDERPANTS", "HOLY COW!", "ROYAL FLUSH", "FLYING BREAKFAST", "DEFINITELY SAFE", "DISCO DROP", "BLING BLING", "PURRFECT LANDING", "WOOF WOOF"]
+const CHUTE_PRICES := [0, 0, 0, 0, 150, 150, 200, 150, 200, 200, 500, 200, 200]
+const CHUTE_SHOP_ORDER := [4, 5, 6, 7, 8, 9, 11, 10, 12]
 var selected_chute := 0
+var owned_chutes: Array[int] = [0, 1, 2, 3]
 var chute_buttons: Array[Button] = []
 var character_confirmed := false
 var racer_skins: Array[int] = [0, 1, 2, 3]
@@ -38,6 +43,7 @@ var carousel_time := 1.0
 var carousel_direction := 1.0
 const CAROUSEL_DURATION := 0.42
 const POINTS := [10, 7, 4, 2]
+const CHARACTER_PRICES := [0, 0, 0, 0, 500, 500, 300, 300, 200, 500, 300, 200, 200]
 # Earlier deployments cost time; all opponents use the player's flight physics.
 const RIVAL_DEPLOY_RANGES := [Vector2(18.6, 20.0), Vector2(17.0, 18.6), Vector2(16.0, 17.0)]
 var rival_round_form := 0.0
@@ -55,6 +61,12 @@ var finish_order: Array[int] = []
 var best_time := 0.0
 var wins := 0
 var career_points := 0
+var credits := 0
+var owned_characters: Array[int] = [0, 1, 2, 3]
+var rounds_completed := 0
+var tournament_paid := false
+var tournament_reward := 0
+var shop_message := ""
 var displayed_career_points := 0.0
 var round_scored := false
 var sound: AudioStreamPlayer
@@ -62,6 +74,9 @@ var ui: Control
 var action: Button
 var action_hint: Label
 var home_button: Button
+var menu_side_buttons: Array[Button] = []
+var shop_tabs: Array[Button] = []
+var shop_category := 0
 var heading: Label
 var detail: Label
 var badge: Label
@@ -91,7 +106,16 @@ const CHARACTER_JOKES := [
 	["DID MY HAIR WIN TOO?", "NO AUTOGRAPHS IN FLIGHT!", "GOOD HAIR. GREAT AIR."],
 	["WHO PACKED THE SNACKS?", "GOGGLES: ON. BRAIN: OFF.", "WAS THAT THE PRACTICE?"],
 	["MY BERET DESERVES GOLD!", "A MOST ELEGANT DESCENT!", "DRAMA? I CALL IT STYLE."],
-	["MY HAT DID ALL THE WORK!", "WAKE ME FOR THE CAKE.", "PROPELLER. STILL NO LIFT."]
+	["MY HAT DID ALL THE WORK!", "WAKE ME FOR THE CAKE.", "PROPELLER. STILL NO LIFT."],
+	["I MEANT TO LAND THERE.", "EIGHT LIVES LEFT!", "PURRFECT LANDING."],
+	["WHO IS A GOOD PILOT?", "DID SOMEONE SAY TREAT?", "TAILWIND INCLUDED!"],
+	["MY WINGS ARE DECORATIVE!", "THAT WAS JUST A WARM-UP.", "FIRE? I PREFER JELLY."],
+	["YOU NEVER SAW ME FALL.", "STEALTH MODE: WOBBLY.", "GRAVITY FOUND ME."],
+	["BUZZING WITH TALENT!", "MY WINGS NEED A BREAK.", "HONEY, I LANDED!"],
+	["RAINBOW EXPRESS!", "MY MANE LANDED FIRST.", "MAGIC NEEDS A CHUTE TOO."],
+	["LANDING.EXE COMPLETE.", "ERROR: TOO MUCH GRAVITY.", "REBOOTING MY DIGNITY."],
+	["I SCARED MYSELF!", "BOO WAS THE PLAN.", "STILL AFRAID OF HEIGHTS."],
+	["A PERFECT JELLY SOUFFLE!", "AL DENTE LANDING.", "THE FLOOR NEEDS SALT."]
 ]
 
 func _ready() -> void:
@@ -99,7 +123,7 @@ func _ready() -> void:
 	dialogue_rng.randomize()
 	red_altitude = braking_distance(TERMINAL)
 	_load_record()
-	displayed_career_points = float(career_points)
+	displayed_career_points = float(credits)
 	_assign_characters()
 	_make_sound()
 	_make_ui()
@@ -169,6 +193,30 @@ func _make_ui() -> void:
 	home_button.mouse_filter = Control.MOUSE_FILTER_STOP
 	home_button.pressed.connect(_return_to_menu)
 	ui.add_child(home_button)
+	# Reserved menu actions: visual feedback only until options/shop are implemented.
+	for item in [["options", 58.0, "Options"], ["shop", 422.0, "Shop"]]:
+		var button := Button.new()
+		button.name = "OptionsButton" if item[0] == "options" else "ShopButton"
+		button.position = Vector2(item[1], 746)
+		button.size = Vector2(60, 60)
+		button.icon = load("res://assets/icons/menu-%s.svg" % item[0])
+		button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		button.tooltip_text = item[2]
+		button.focus_mode = Control.FOCUS_NONE
+		button.mouse_filter = Control.MOUSE_FILTER_STOP
+		ui.add_child(button)
+		menu_side_buttons.append(button)
+		if item[0] == "shop":
+			button.pressed.connect(_open_shop)
+	for category in range(2):
+		var tab := Button.new()
+		tab.position = Vector2(28 + category * 246, 190)
+		tab.size = Vector2(238, 64)
+		tab.text = "JELLIES" if category == 0 else "PARACHUTES"
+		tab.focus_mode = Control.FOCUS_NONE
+		tab.pressed.connect(_select_shop_tab.bind(category))
+		ui.add_child(tab)
+		shop_tabs.append(tab)
 	for direction in [-1, 1]:
 		var button := Button.new()
 		button.position = Vector2(42 if direction == -1 else 426, 479)
@@ -228,12 +276,31 @@ func _menu() -> void:
 	action.disabled = false
 	toon_art.sync_ui()
 
+func _open_shop() -> void:
+	state = "shop"
+	shop_category = 0
+	shop_message = ""
+	toon_art.sync_ui()
+	queue_redraw()
+
+func _select_shop_tab(category: int) -> void:
+	shop_category = clampi(category, 0, 1)
+	shop_message = ""
+	toon_art.sync_ui()
+	queue_redraw()
+
 func _action() -> void:
 	match state:
 		"menu", "podium":
+			if state == "menu" and (not owns_character(selected_character) or not owns_chute(selected_chute)):
+				_open_shop()
+				return
 			if state == "menu":
 				character_confirmed = true
 				_save_record()
+			rounds_completed = 0
+			tournament_paid = false
+			tournament_reward = 0
 			totals = [0, 0, 0, 0]
 			round_number = 1
 			_shuffle_difficulties()
@@ -308,14 +375,15 @@ func _deploy(i: int) -> void:
 
 func _process(delta: float) -> void:
 	if state == "menu":
-		displayed_career_points = move_toward(displayed_career_points, float(career_points), maxf(12.0, absf(career_points - displayed_career_points) * 7.0) * delta)
+		displayed_career_points = move_toward(displayed_career_points, float(credits), maxf(12.0, absf(credits - displayed_career_points) * 7.0) * delta)
 	if state in ["results", "podium"]:
 		_advance_podium_dialogue(delta)
 	carousel_time = minf(CAROUSEL_DURATION, carousel_time + delta)
 	animation_time += delta
 	var rotor_target := 1.2
-	if state == "race" and not racers[racer_skins.find(3)].done:
-		rotor_target += float(racers[racer_skins.find(3)].speed) * 2.7
+	var pickle_slot := racer_skins.find(3)
+	if state == "race" and pickle_slot >= 0 and not racers[pickle_slot].done:
+		rotor_target += float(racers[pickle_slot].speed) * 2.7
 	hat_rotor_speed = lerpf(hat_rotor_speed, rotor_target, 1.0 - exp(-delta * 4.0))
 	hat_rotor_angle = fposmod(hat_rotor_angle + hat_rotor_speed * delta, TAU)
 	jump_flash = maxf(0.0, jump_flash - delta)
@@ -465,11 +533,13 @@ func _results() -> void:
 		var i := order[rank]
 		var points: int = POINTS[rank] if racers[i].safe else 0
 		totals[i] += points
-		if i == 0:
-			career_points += points
 		detail.text += "%d. %s   %s   +%d\n" % [rank + 1, NAMES[i], _time_text(racers[i].time) if racers[i].safe else "SPLAT", points]
+	rounds_completed += 1
 	_learn_player_round(order.find(0))
-	_save_record()
+	if rounds_completed == 3 and round_number == 3:
+		_settle_tournament()
+	else:
+		_save_record()
 	stats.text = "TOTAL POINTS   YOU %d  •  MANGO %d\nBUBBLES %d  •  PICKLE %d" % totals
 	action.text = "SHOW PODIUM" if round_number == 3 else "NEXT ROUND"
 	action.disabled = false
@@ -483,9 +553,7 @@ func _podium() -> void:
 		if totals[a] == totals[b]:
 			return order_tiebreak(a) < order_tiebreak(b)
 		return totals[a] > totals[b])
-	if order[0] == 0:
-		wins += 1
-		_save_record()
+	_settle_tournament()
 	heading.text = "YOU TAKE THE CROWN!" if order[0] == 0 else "%s WINS!" % NAMES[order[0]]
 	detail.text = "FLIGHT CLUB PODIUM\n\n"
 	for rank in range(4):
@@ -493,6 +561,96 @@ func _podium() -> void:
 	detail.text += "\nTied scores: final round decides."
 	stats.text = "WINS  %d     •     BEST  %s" % [wins, _time_text(best_time)]
 	action.text = "ONE MORE TOURNAMENT!"
+
+func _settle_tournament() -> void:
+	if tournament_paid or rounds_completed != 3 or round_number != 3:
+		return
+	var reward := totals[0]
+	var old_wins := wins
+	var order := reaction_order() if state == "podium" else _tournament_order()
+	credits += reward
+	career_points += reward
+	if order[0] == 0:
+		wins += 1
+	if _save_record() == OK:
+		tournament_paid = true
+		tournament_reward = reward
+	else:
+		credits -= reward
+		career_points -= reward
+		wins = old_wins
+
+func _tournament_order() -> Array[int]:
+	var order: Array[int] = [0, 1, 2, 3]
+	order.sort_custom(func(a: int, b: int) -> bool: return totals[a] > totals[b] if totals[a] != totals[b] else order_tiebreak(a) < order_tiebreak(b))
+	return order
+
+func owns_character(character: int) -> bool:
+	return character >= 0 and character < CHARACTER_NAMES.size() and character in owned_characters
+
+func owns_chute(chute: int) -> bool:
+	return chute >= 0 and chute < CHUTE_NAMES.size() and chute in owned_chutes
+
+func _shop_chute_action(chute: int) -> void:
+	if state != "shop" or shop_category != 1 or chute < 4 or chute >= CHUTE_NAMES.size():
+		return
+	shop_message = ""
+	if owns_chute(chute):
+		var previous := selected_chute
+		var was_confirmed := character_confirmed
+		selected_chute = chute
+		character_confirmed = true
+		if _save_record() != OK:
+			selected_chute = previous
+			character_confirmed = was_confirmed
+			shop_message = "SAVE FAILED. PLEASE TRY AGAIN."
+	else:
+		var price: int = CHUTE_PRICES[chute]
+		if credits < price:
+			shop_message = "%d MORE CREDITS NEEDED" % (price - credits)
+		else:
+			credits -= price
+			owned_chutes.append(chute)
+			if _save_record() != OK:
+				credits += price
+				owned_chutes.erase(chute)
+				shop_message = "SAVE FAILED. PLEASE TRY AGAIN."
+			else:
+				shop_message = "%s UNLOCKED!" % CHUTE_NAMES[chute]
+	toon_art.sync_ui()
+	queue_redraw()
+
+func _shop_character_action(character: int) -> void:
+	if state != "shop" or shop_category != 0 or character < 4 or character >= CHARACTER_NAMES.size():
+		return
+	shop_message = ""
+	if owns_character(character):
+		var previous := selected_character
+		var was_confirmed := character_confirmed
+		selected_character = character
+		character_confirmed = true
+		if _save_record() != OK:
+			selected_character = previous
+			character_confirmed = was_confirmed
+			shop_message = "SAVE FAILED. PLEASE TRY AGAIN."
+		else:
+			_assign_characters()
+			_reset_racers()
+	else:
+		var price: int = CHARACTER_PRICES[character]
+		if credits < price:
+			shop_message = "%d MORE CREDITS NEEDED" % (price - credits)
+		else:
+			credits -= price
+			owned_characters.append(character)
+			if _save_record() != OK:
+				credits += price
+				owned_characters.erase(character)
+				shop_message = "SAVE FAILED. PLEASE TRY AGAIN."
+			else:
+				shop_message = "%s UNLOCKED!" % CHARACTER_NAMES[character]
+	toon_art.sync_ui()
+	queue_redraw()
 
 func order_tiebreak(i: int) -> int:
 	return _ranked().find(i)
@@ -560,11 +718,33 @@ func _load_record() -> void:
 	best_time = maxf(0.0, float(config.get_value("records", "best_time", 0.0)))
 	wins = maxi(0, int(config.get_value("records", "wins", 0)))
 	career_points = maxi(0, int(config.get_value("records", "career_points", 0)))
-	selected_character = clampi(int(config.get_value("settings", "character", 0)), 0, 3)
-	selected_chute = clampi(int(config.get_value("settings", "chute", selected_character)), 0, 3)
+	selected_character = clampi(int(config.get_value("settings", "character", 0)), 0, CHARACTER_NAMES.size() - 1)
+	selected_chute = clampi(int(config.get_value("settings", "chute", selected_character % 4)), 0, CHUTE_NAMES.size() - 1)
+	var chute_migration := not config.has_section_key("wallet", "owned_chutes")
+	owned_chutes.assign([0, 1, 2, 3])
+	for value in config.get_value("wallet", "owned_chutes", []):
+		var chute := int(value)
+		if chute >= 4 and chute < CHUTE_NAMES.size() and chute not in owned_chutes:
+			owned_chutes.append(chute)
+	if not owns_chute(selected_chute):
+		selected_chute = 0
+	var economy_migration := not config.has_section_key("wallet", "credits")
+	credits = maxi(0, int(config.get_value("wallet", "credits", career_points)))
+	owned_characters.assign([0, 1, 2, 3])
+	for value in config.get_value("wallet", "owned_characters", []):
+		var character := int(value)
+		if character >= 4 and character < CHARACTER_NAMES.size() and character not in owned_characters:
+			owned_characters.append(character)
+	# Preserve a previously confirmed premium character when upgrading old saves.
+	if economy_migration and selected_character >= 4:
+		owned_characters.append(selected_character)
+	if not owns_character(selected_character):
+		selected_character = 0
 	character_confirmed = config.has_section_key("settings", "character")
 	player_skill = clampf(float(config.get_value("adaptive", "skill", 0.5)), 0, 1)
 	learned_rounds = maxi(0, int(config.get_value("adaptive", "rounds", 0)))
+	if (economy_migration or chute_migration) and not migrating:
+		_save_record()
 	if migrating and _save_record() == OK:
 		# Remove plaintext only after the encrypted replacement was verified.
 		var error := DirAccess.remove_absolute(ProjectSettings.globalize_path(legacy_save_path))
@@ -578,6 +758,9 @@ func _save_record() -> Error:
 	config.set_value("records", "best_time", best_time)
 	config.set_value("records", "wins", wins)
 	config.set_value("records", "career_points", career_points)
+	config.set_value("wallet", "credits", credits)
+	config.set_value("wallet", "owned_characters", owned_characters)
+	config.set_value("wallet", "owned_chutes", owned_chutes)
 	config.set_value("adaptive", "skill", player_skill)
 	config.set_value("adaptive", "rounds", learned_rounds)
 	if character_confirmed:
@@ -707,15 +890,19 @@ func reaction_order() -> Array[int]:
 
 func _assign_characters() -> void:
 	racer_skins.assign([selected_character])
-	for character in range(4):
-		if character != selected_character:
-			racer_skins.append(character)
+	if selected_character < 4:
+		for character in range(4):
+			if character != selected_character:
+				racer_skins.append(character)
+	else:
+		for offset in range(1, 4):
+			racer_skins.append((selected_character + offset) % CHARACTER_NAMES.size())
 	for slot in range(4):
 		COLORS[slot] = CHARACTER_COLORS[racer_skins[slot]]
 		NAMES[slot] = "YOU" if slot == 0 else CHARACTER_NAMES[racer_skins[slot]]
 
 func _select_character(character: int) -> void:
-	if state != "menu" or character < 0 or character > 3:
+	if state != "menu" or not owns_character(character):
 		return
 	if selected_character != character:
 		carousel_time = 0.0
@@ -729,20 +916,31 @@ func _cycle_character(direction: int) -> void:
 	if state != "menu":
 		return
 	carousel_direction = 1.0 if direction > 0 else -1.0
-	_select_character(posmod(selected_character + direction, 4))
+	for step in range(1, CHARACTER_NAMES.size() + 1):
+		var candidate := posmod(selected_character + direction * step, CHARACTER_NAMES.size())
+		if owns_character(candidate):
+			_select_character(candidate)
+			break
 
 func _cycle_chute(direction: int) -> void:
 	if state != "menu":
 		return
 	carousel_direction = 1.0 if direction > 0 else -1.0
 	carousel_time = 0.0
-	selected_chute = posmod(selected_chute + direction, 4)
+	for step in range(1, CHUTE_NAMES.size() + 1):
+		var candidate := posmod(selected_chute + direction * step, CHUTE_NAMES.size())
+		if owns_chute(candidate):
+			selected_chute = candidate
+			break
 	queue_redraw()
 
 func chute_skin(slot: int) -> int:
-	return selected_chute if slot == 0 else racer_skins[slot]
+	return selected_chute if slot == 0 else racer_skins[slot] % 4
 
 func _return_to_menu() -> void:
+	rounds_completed = 0
+	tournament_paid = false
+	tournament_reward = 0
 	totals.assign([0, 0, 0, 0])
 	round_number = 1
 	timer = 0.0

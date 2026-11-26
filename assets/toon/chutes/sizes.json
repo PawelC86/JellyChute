@@ -1,0 +1,83 @@
+[
+  {
+    "id": "underpants",
+    "source_bytes": 1922316,
+    "runtime_bytes": 144167,
+    "runtime_size": [
+      384,
+      252
+    ]
+  },
+  {
+    "id": "cow",
+    "source_bytes": 1513316,
+    "runtime_bytes": 114801,
+    "runtime_size": [
+      384,
+      238
+    ]
+  },
+  {
+    "id": "royal",
+    "source_bytes": 1788572,
+    "runtime_bytes": 127943,
+    "runtime_size": [
+      347,
+      256
+    ]
+  },
+  {
+    "id": "breakfast",
+    "source_bytes": 1562069,
+    "runtime_bytes": 128399,
+    "runtime_size": [
+      343,
+      256
+    ]
+  },
+  {
+    "id": "patched",
+    "source_bytes": 1570609,
+    "runtime_bytes": 132606,
+    "runtime_size": [
+      344,
+      256
+    ]
+  },
+  {
+    "id": "disco",
+    "source_bytes": 2016201,
+    "runtime_bytes": 159229,
+    "runtime_size": [
+      347,
+      256
+    ]
+  },
+  {
+    "id": "bling",
+    "source_bytes": 2193934,
+    "runtime_bytes": 162374,
+    "runtime_size": [
+      384,
+      254
+    ]
+  },
+  {
+    "id": "cat",
+    "source_bytes": 2257770,
+    "runtime_bytes": 143932,
+    "runtime_size": [
+      384,
+      243
+    ]
+  },
+  {
+    "id": "dog",
+    "source_bytes": 2083060,
+    "runtime_bytes": 132733,
+    "runtime_size": [
+      384,
+      235
+    ]
+  }
+]
