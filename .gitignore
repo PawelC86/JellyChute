@@ -1,13 +1,61 @@
+# Godot: generated imports, editor cache and local export credentials.
 .godot/
-*.apk
-*.aab
 export_credentials.cfg
 
-# Generated source art and local verification artifacts (not runtime assets).
+# Build outputs and Gradle caches.
+build/
+builds/
+.gradle/
+*.apk
+*.aab
+*.apks
+*.idsig
+
+# Generated Android template and machine-local SDK configuration.
+/android/build/
+/android/.build_version
+local.properties
+
+# Signing keys and private credentials.
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.key
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Generated previews/source intermediates; keep work/*.gd and *.py scripts.
 /work/source-art/
 /work/before-collection/
 /work/collection-previews/
-/work/shop-*.png*
-/work/menu-buttons.png*
+/work/*.png
+/work/*.png.import
+/work/main-before-paper.gd.txt
+
+# Python caches.
 __pycache__/
-*.pyc
+*.py[cod]
+
+# Local logs, temporary files and editor/OS leftovers.
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*.swp
+*.swo
+*~
+.idea/
+.vs/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local player saves, if copied into the project for debugging.
+records.cfg
+records.dat
+records.dat.tmp

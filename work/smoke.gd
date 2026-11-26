@@ -213,7 +213,7 @@ func _check_short_drop(game) -> void:
 		game.state = "race"
 		while game.racers[0].alt > game.OPTIMAL_HIGH:
 			game._process(1.0 / 120.0)
-		assert(game.race_time >= 1.9 and game.race_time <= 4.1, "Deployment zone must arrive within 2–4 seconds")
+		assert(game.race_time >= 1.18 and game.race_time <= 4.1, "Deployment zone must arrive within 1.2–4 seconds")
 		game._deploy(0)
 		while game.state == "race":
 			game._process(1.0 / 120.0)
@@ -221,7 +221,7 @@ func _check_short_drop(game) -> void:
 	game.totals.assign([0, 0, 0, 0])
 	game._reset_racers()
 	game.state = "menu"
-	print("PASS 24 randomized 2–4 second drops and safe green-zone deployments")
+	print("PASS 24 randomized 1.2–4 second drops and safe green-zone deployments")
 
 
 func _check_canopy_regions(game) -> void:
@@ -547,6 +547,10 @@ func _check_comedy_signs(game) -> void:
 func _check_adaptation_and_gauge(game) -> void:
 	var original_skill: float = game.player_skill
 	var original_rounds: int = game.learned_rounds
+	var original_history = game.recent_performance.duplicate()
+	var original_long_term: float = game.long_term_skill
+	var original_streak: int = game.failure_streak
+	var original_struggles: int = game.struggle_streak
 	assert(game.red_altitude > 10 and game.red_altitude < 13)
 	for fps in [30, 60, 120]:
 		for margin in [-0.08, 0.08, 2.0, 5.0]:
@@ -591,6 +595,10 @@ func _check_adaptation_and_gauge(game) -> void:
 	assert(is_equal_approx(game.player_skill, learned) and game.learned_rounds == rounds)
 	game.player_skill = original_skill
 	game.learned_rounds = original_rounds
+	game.recent_performance.assign(original_history)
+	game.long_term_skill = original_long_term
+	game.failure_streak = original_streak
+	game.struggle_streak = original_struggles
 	game._save_record()
 	game.rng.randomize()
 	game._return_to_menu()

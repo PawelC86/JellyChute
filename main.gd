@@ -21,6 +21,16 @@ var red_altitude := 0.0
 var player_skill := 0.5
 var learned_rounds := 0
 var round_player_skill := 0.5
+const ADAPTIVE_HISTORY_SIZE := 12
+var recent_performance: Array[float] = []
+var long_term_skill := 0.5
+var failure_streak := 0
+var struggle_streak := 0
+# Transient form belongs to this tournament; the learned profile persists.
+var tournament_form: Array[Dictionary] = []
+var round_rival_adjustment := 0.0
+var round_rival_variation := 0.3
+var round_learned := false
 const OPTIMAL_LOW := 16.0
 const OPTIMAL_HIGH := 21.0
 const CHARACTER_COLORS := [Color("ff779d"), Color("ffc857"), Color("a390ff"), Color("50dbbd"), Color("f5a66b"), Color("c99157"), Color("f67b76"), Color("5265a0"), Color("f3bc38"), Color("c6a4ed"), Color("98d4ca"), Color("b9e8f4"), Color("f16b7e")]
@@ -252,6 +262,7 @@ func _label(x: float, y: float, width: float, height: float, font_size: int) -> 
 	return label
 
 func _reset_racers() -> void:
+	round_learned = false
 	round_scored = false
 	first_landing_time = -1.0
 	racers.clear()
@@ -298,6 +309,8 @@ func _action() -> void:
 			if state == "menu":
 				character_confirmed = true
 				_save_record()
+			tournament_form.clear()
+			round_rival_adjustment = 0.0
 			rounds_completed = 0
 			tournament_paid = false
 			tournament_reward = 0
@@ -345,10 +358,18 @@ func _start_round() -> void:
 	action.size = Vector2(480, 84)
 	action.add_theme_font_size_override("font_size", 23)
 	# At 12m/s terminal speed, acceleration adds half a second.
-	start_altitude = OPTIMAL_HIGH + TERMINAL * (rng.randf_range(2.0, 4.0) - 0.5)
+	var freefall_seconds := rng.randf_range(1.2, 2.0) if rng.randf() < 0.4 else rng.randf_range(2.0, 4.0)
+	start_altitude = OPTIMAL_HIGH + TERMINAL * (freefall_seconds - 0.5)
+	var previous_rival_height := 0.0
+	if tournament_form.size() >= 2 and racers.size() == 4:
+		previous_rival_height = (float(racers[1].target) + float(racers[2].target) + float(racers[3].target)) / 3.0
 	round_player_skill = player_skill
-	rival_round_form = rng.randf_range(-0.7, 0.7)
+	round_rival_adjustment = _tournament_rival_adjustment()
+	round_rival_variation = 0.18 if tournament_form.size() >= 2 and not is_zero_approx(round_rival_adjustment) else 0.3
+	var form_range := 0.35 if tournament_form.size() >= 2 and not is_zero_approx(round_rival_adjustment) else 0.7
+	rival_round_form = rng.randf_range(-form_range, form_range)
 	_reset_racers()
+	_balance_finale(previous_rival_height)
 	state = "countdown"
 	heading.add_theme_font_size_override("font_size", 64)
 	timer = 3.0
@@ -491,7 +512,9 @@ func _land(i: int) -> void:
 	if finish_order.is_empty():
 		first_landing_time = race_time
 	r.done = true
-	r.safe = r.speed <= SAFE_SPEED
+	# The solid red gauge zone is always a failed deployment, at any speed.
+	var opened_in_red: bool = r.open and r.deploy_altitude >= 0.0 and r.deploy_altitude <= red_altitude
+	r.safe = r.speed <= SAFE_SPEED and not opened_in_red
 	r.speed = 0.0
 	r.time = race_time
 	r.squash = 1.0
@@ -507,7 +530,21 @@ func _land(i: int) -> void:
 		_tone(440.0 if r.safe else 100.0, 0.2)
 		if r.safe and (best_time == 0.0 or race_time < best_time):
 			best_time = race_time
-			_save_record()
+
+		# Safe racers that already landed determine our final safe placement.
+		var place := 0
+		for slot in finish_order:
+			if slot != 0 and racers[slot].safe:
+				place += 1
+		_record_player_round(place if r.safe else 3)
+
+func _record_player_round(place: int) -> void:
+	if round_learned:
+		return
+	round_learned = true
+	_learn_player_round(place)
+	tournament_form.append({"safe": bool(racers[0].safe), "place": clampi(place, 0, 3), "score": recent_performance.back()})
+	_save_record()
 
 func _ranked() -> Array[int]:
 	var order: Array[int] = []
@@ -535,7 +572,7 @@ func _results() -> void:
 		totals[i] += points
 		detail.text += "%d. %s   %s   +%d\n" % [rank + 1, NAMES[i], _time_text(racers[i].time) if racers[i].safe else "SPLAT", points]
 	rounds_completed += 1
-	_learn_player_round(order.find(0))
+	_record_player_round(order.find(0))
 	if rounds_completed == 3 and round_number == 3:
 		_settle_tournament()
 	else:
@@ -741,11 +778,23 @@ func _load_record() -> void:
 	if not owns_character(selected_character):
 		selected_character = 0
 	character_confirmed = config.has_section_key("settings", "character")
-	player_skill = clampf(float(config.get_value("adaptive", "skill", 0.5)), 0, 1)
+	player_skill = _valid_skill(config.get_value("adaptive", "skill", 0.5), 0.5)
 	learned_rounds = maxi(0, int(config.get_value("adaptive", "rounds", 0)))
+	long_term_skill = _valid_skill(config.get_value("adaptive", "long_term", player_skill), player_skill)
+	player_skill = _valid_skill(player_skill, 0.5)
+	failure_streak = clampi(int(config.get_value("adaptive", "failure_streak", 0)), 0, 12)
+	struggle_streak = clampi(int(config.get_value("adaptive", "struggle_streak", failure_streak)), 0, 12)
+	recent_performance.clear()
+	var history = config.get_value("adaptive", "recent_performance", [])
+	if history is Array:
+		for sample in history:
+			if (sample is float or sample is int) and is_finite(float(sample)):
+				recent_performance.append(clampf(float(sample), 0.0, 1.0))
+		while recent_performance.size() > ADAPTIVE_HISTORY_SIZE:
+			recent_performance.pop_front()
 	if (economy_migration or chute_migration) and not migrating:
 		_save_record()
-	if migrating and _save_record() == OK:
+	if FileAccess.file_exists(legacy_save_path) and _save_record() == OK:
 		# Remove plaintext only after the encrypted replacement was verified.
 		var error := DirAccess.remove_absolute(ProjectSettings.globalize_path(legacy_save_path))
 		if error != OK:
@@ -763,6 +812,11 @@ func _save_record() -> Error:
 	config.set_value("wallet", "owned_chutes", owned_chutes)
 	config.set_value("adaptive", "skill", player_skill)
 	config.set_value("adaptive", "rounds", learned_rounds)
+	config.set_value("adaptive", "version", 3)
+	config.set_value("adaptive", "long_term", long_term_skill)
+	config.set_value("adaptive", "failure_streak", failure_streak)
+	config.set_value("adaptive", "struggle_streak", struggle_streak)
+	config.set_value("adaptive", "recent_performance", recent_performance)
 	if character_confirmed:
 		config.set_value("settings", "character", selected_character)
 		config.set_value("settings", "chute", selected_chute)
@@ -796,6 +850,8 @@ func _tone(frequency: float, duration: float) -> void:
 	sound.play()
 
 func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		_save_record()
 	if what == NOTIFICATION_APPLICATION_PAUSED:
 		_save_record()
 		get_tree().paused = true
@@ -938,6 +994,8 @@ func chute_skin(slot: int) -> int:
 	return selected_chute if slot == 0 else racer_skins[slot] % 4
 
 func _return_to_menu() -> void:
+	tournament_form.clear()
+	round_rival_adjustment = 0.0
 	rounds_completed = 0
 	tournament_paid = false
 	tournament_reward = 0
@@ -963,10 +1021,43 @@ func _shuffle_difficulties() -> void:
 func round_difficulty() -> int:
 	return difficulty_order[clampi(round_number - 1, 0, 2)]
 
+# Anchor the finale to the actual previous opponents, so a shuffled tier cannot
+# turn a small challenge into a large spike (or cancel the requested relief).
+func _balance_finale(previous_height: float) -> void:
+	if previous_height <= 0.0 or tournament_form.size() < 2:
+		return
+	if not is_equal_approx(round_rival_adjustment, 2.5) and not is_equal_approx(round_rival_adjustment, -0.65):
+		return
+	var current := (float(racers[1].target) + float(racers[2].target) + float(racers[3].target)) / 3.0
+	var target: float
+	if round_rival_adjustment > 0.0:
+		target = clampf(current, previous_height + 0.8, previous_height + 2.5)
+	else:
+		target = clampf(current, previous_height - 0.7, previous_height - 0.25)
+	for slot in range(1, 4):
+		racers[slot].target = clampf(float(racers[slot].target) + target - current, red_altitude + 1.2, 24.0)
+
+# Positive metres mean earlier opening and slower opponents. Relief is
+# deliberately much stronger than the extra challenge after excellent play.
+func _tournament_rival_adjustment() -> float:
+	var count := tournament_form.size()
+	if count == 0:
+		return 0.0
+	var last: Dictionary = tournament_form[count - 1]
+	var weak: bool = not last.safe or last.place >= 2
+	var strong: bool = last.safe and last.place <= 1 and last.score >= 0.72
+	if count >= 2:
+		var previous: Dictionary = tournament_form[count - 2]
+		if weak and (not previous.safe or previous.place >= 2):
+			return 2.5
+		if strong and previous.safe and previous.place <= 1 and previous.score >= 0.72:
+			return -0.65
+	return 1.0 if weak else (-0.2 if strong else 0.0)
+
 func _rival_deploy_height() -> float:
 	var limits: Vector2 = RIVAL_DEPLOY_RANGES[round_difficulty()]
 	var adaptation := lerpf(2.5, -2.0, round_player_skill) - 0.25
-	return clampf(rng.randf_range(limits.x, limits.y) + rival_round_form + rng.randf_range(-0.3, 0.3) + adaptation, red_altitude + 1.2, 24.0)
+	return clampf(rng.randf_range(limits.x, limits.y) + rival_round_form + rng.randf_range(-round_rival_variation, round_rival_variation) + adaptation + round_rival_adjustment, red_altitude + 1.2, 24.0)
 
 func _begin_podium_dialogue() -> void:
 	podium_dialogue_time = 0.0
@@ -1018,16 +1109,38 @@ func deployment_color(altitude: float) -> Color:
 		return orange.lerp(green, smoothstep(midway, warning_top, altitude))
 	return green
 
+func _valid_skill(value: Variant, fallback: float) -> float:
+	if (value is float or value is int) and is_finite(float(value)):
+		return clampf(float(value), 0.0, 1.0)
+	return fallback
+
 func _learn_player_round(place: int) -> void:
 	var player: Dictionary = racers[0]
 	var performance := 0.0
 	if player.safe:
 		var precision := 0.35
 		if player.deploy_altitude >= 0:
-			var margin: float = maxf(0, player.deploy_altitude - braking_distance(player.deploy_speed))
-			precision = clampf(1.0 - margin / 12.0, 0, 1)
-		performance = 0.25 + precision * 0.25 + (3 - clampi(place, 0, 3)) / 3.0 * 0.5
-	var rate := 0.22 if learned_rounds < 6 else 0.12
-	var target := lerpf(player_skill, performance, rate)
-	player_skill = clampf(move_toward(player_skill, target, 0.08), 0, 1)
+			var margin: float = maxf(0.0, player.deploy_altitude - braking_distance(player.deploy_speed))
+			precision = clampf(1.0 - margin / 12.0, 0.0, 1.0)
+		# Timing matters more than placement against already adaptive opponents.
+		performance = 0.25 + precision * 0.45 + (3 - clampi(place, 0, 3)) / 3.0 * 0.3
+		failure_streak = 0
+	else:
+		failure_streak = mini(failure_streak + 1, ADAPTIVE_HISTORY_SIZE)
+	struggle_streak = mini(struggle_streak + 1, ADAPTIVE_HISTORY_SIZE) if not player.safe or place >= 2 else 0
+	recent_performance.append(performance)
+	if recent_performance.size() > ADAPTIVE_HISTORY_SIZE:
+		recent_performance.pop_front()
+	var weighted := 0.0
+	var weights := 0.0
+	for index in range(recent_performance.size()):
+		var weight := float(index + 1)
+		weighted += recent_performance[index] * weight
+		weights += weight
+	long_term_skill = lerpf(long_term_skill, performance, 0.12 if learned_rounds < 6 else 0.06)
+	var target := weighted / weights * 0.7 + long_term_skill * 0.3
+	# Consecutive crashes grant relief; one unlucky jump has a small effect.
+	target = maxf(0.0, target - minf(failure_streak * 0.035 + struggle_streak * 0.025, 0.18))
+	var max_change := 0.05 if target > player_skill else (0.08 if struggle_streak >= 2 else 0.035)
+	player_skill = clampf(move_toward(player_skill, target, max_change), 0.0, 1.0)
 	learned_rounds += 1

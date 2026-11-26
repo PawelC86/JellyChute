@@ -325,6 +325,7 @@ func jelly(feet: Vector2, i: int, flight: bool, hero: bool = false, size: float 
 	var clock: float = g.animation_time * (5 + wind * 14) + i
 	var finished: bool = r.done and g.state in ["race", "settle", "results", "podium"]
 	var celebration: bool = not flight and g.state in ["results", "podium"]
+	var finale: bool = celebration and g.state == "podium"
 	var proud: bool = flight and finished and r.safe and r.finish_age > 0.4 and r.finish_age < 2.8
 	var podium_rank: int = g.reaction_order().find(i) if celebration else -1
 	var conflict := fposmod(g.podium_dialogue_time, 12.0)
@@ -352,12 +353,12 @@ func jelly(feet: Vector2, i: int, flight: bool, hero: bool = false, size: float 
 		feet += pose.offset
 		lean = pose.lean
 		stretch = pose.stretch
-		if podium_rank == 1 and conflict > 3.0 and conflict < 5.5:
+		if finale and podium_rank == 1 and conflict > 3.0 and conflict < 5.5:
 			var reach := sin((conflict - 3.0) / 2.5 * PI)
 			feet += Vector2(reach * 14, -reach * 15)
 			stretch = Vector2(1.0 - reach * 0.08, 1.0 + reach * 0.18)
 			lean = reach * 0.12
-		if podium_rank == 0 and conflict > 4.5 and conflict < 6.0:
+		if finale and podium_rank == 0 and conflict > 4.5 and conflict < 6.0:
 			lean = -sin((conflict - 4.5) / 1.5 * PI) * 0.22
 	if proud:
 		var puff: float = sin(clampf((r.finish_age - 0.4) / 2.4, 0, 1) * PI)
@@ -425,7 +426,7 @@ func jelly(feet: Vector2, i: int, flight: bool, hero: bool = false, size: float 
 	var mood: String = reaction if celebration else expression_for(i, flight, hero)
 	if proud:
 		mood = "proud"
-	if celebration and podium_rank == 0 and conflict > 8 and conflict < 10.5:
+	if finale and podium_rank == 0 and conflict > 8 and conflict < 10.5:
 		mood = "surprised"
 	face(skin, mood, clock)
 	character_accessories(skin, mood, clock)
@@ -433,7 +434,7 @@ func jelly(feet: Vector2, i: int, flight: bool, hero: bool = false, size: float 
 	if proud:
 		for side in [-1, 1]:
 			g._star(Vector2(side * 39, -62 + sin(r.finish_age * 7 + side) * 5), 5, CORAL)
-	if celebration and podium_rank == 2 and conflict > 6 and conflict < 8.3:
+	if finale and podium_rank == 2 and conflict > 6 and conflict < 8.3:
 		# The bronze medallist checks whether the medal is edible.
 		var nibble := sin(g.animation_time * 18) * 1.5
 		g.draw_line(Vector2(-24, -36), Vector2(-10, -27), INK, 3, true)
@@ -442,7 +443,7 @@ func jelly(feet: Vector2, i: int, flight: bool, hero: bool = false, size: float 
 		for crumb in range(3):
 			g._ellipse(Vector2(-5 + crumb * 6, -23 + fposmod(g.animation_time * 21 + crumb * 9, 19)), Vector2(1.5, 1.5), CORAL)
 	if reaction == "champion":
-		if celebration and conflict > 8 and conflict < 10.5:
+		if finale and conflict > 8 and conflict < 10.5:
 			var slip := sin((conflict - 8) / 2.5 * PI)
 			g.draw_set_transform_matrix(root * Transform2D(slip * 0.22, Vector2(0, slip * 22)))
 		var crown := PackedVector2Array([Vector2(-13, -76), Vector2(-16, -90), Vector2(-7, -85), Vector2(0, -96), Vector2(7, -85), Vector2(16, -90), Vector2(13, -76), Vector2(-13, -76)])
@@ -457,7 +458,22 @@ func jelly(feet: Vector2, i: int, flight: bool, hero: bool = false, size: float 
 		var caption: String = ["1ST", "2ND", "3RD", "4TH"][place] if r.safe else "SPLAT"
 		pill(feet + Vector2(0, 20), caption, i == 0)
 
+# Short glances with pauses read as reactions rather than constantly rolling eyes.
+func recap_gaze(rank: int, time: float) -> Vector2:
+	var phase := fposmod(time + rank * 0.7, 6.8)
+	var beat := floori(phase / 1.7)
+	var poses := [Vector2.ZERO, Vector2(-3.0, -0.7), Vector2(3.0, -0.4), Vector2(0.0, -2.4)]
+	if rank == 1:
+		poses = [Vector2.ZERO, Vector2(3.0, -1.8), Vector2(0.0, -2.0), Vector2(-2.5, 0.8)]
+	elif rank == 2:
+		poses = [Vector2.ZERO, Vector2(-3.0, -1.8), Vector2(2.4, 0.7), Vector2(-1.0, -2.2)]
+	var transition := smoothstep(0.0, 0.3, fposmod(phase, 1.7))
+	return poses[(beat + 3) % 4].lerp(poses[beat], transition)
+
 func face(i: int, mood: String, clock: float) -> void:
+	var recap_eyes: bool = g.state == "results" and mood in ["champion", "runner_up", "relieved"]
+	var recap_rank: int = g.reaction_order().find(g.racer_skins.find(i)) if recap_eyes else -1
+	var gaze := recap_gaze(recap_rank, g.animation_time) if recap_eyes else Vector2.ZERO
 	var dizzy := mood == "dizzy"
 	var panic := mood == "panic"
 	var happy: bool = mood in ["victory", "relief", "landed", "champion", "runner_up", "relieved", "proud"]
@@ -483,8 +499,9 @@ func face(i: int, mood: String, clock: float) -> void:
 			g.draw_arc(eye + Vector2(0, 4), 6.5, PI + 0.15, TAU - 0.15, 14, INK, 3, true)
 		else:
 			var scale_eye := 0.85 if i == 7 else (1.16 if (i == 1 and side == 1) else 1.0)
-			g._ellipse(eye, Vector2(9, 11) * scale_eye, INK)
-			g._ellipse(eye, Vector2(7.4, 9.4) * scale_eye, CREAM)
+			var eye_height := 1.0 + sin(g.animation_time * 2.2 + recap_rank + side * 0.4) * 0.045 if recap_eyes else 1.0
+			g._ellipse(eye, Vector2(9, 11 * eye_height) * scale_eye, INK)
+			g._ellipse(eye, Vector2(7.4, 9.4 * eye_height) * scale_eye, CREAM)
 			var look := Vector2(look_x, 3.0 if mood == "disappointed" else 2.0 if worried else sin(g.animation_time + i))
 			if i == 0:
 				look.x += 1.5
@@ -494,12 +511,17 @@ func face(i: int, mood: String, clock: float) -> void:
 				look.x = -2.0
 			elif i == 3:
 				look.x *= 0.25
+			if recap_eyes:
+				look = gaze * (0.8 if i == 7 else 1.0)
 			g._ellipse(eye + look, Vector2(3.4, 5.5), INK)
 			g._ellipse(eye + look + Vector2(-1, -2), Vector2(1.3, 1.8), Color.WHITE)
 		if i != 7:
 			g._ellipse(Vector2(side * 20, -36), Vector2(5.5, 3.8), Color("f08087"))
 			g._ellipse(Vector2(side * 21, -37), Vector2(1.5, 1.5), Color("ffbdad"))
-		if worried:
+		if recap_eyes:
+			var lift := sin(g.animation_time * 1.6 + recap_rank * 1.8 + side * 0.6) * 1.5
+			g.draw_arc(eye + Vector2(0, -11.5 + lift), 5.5, PI + 0.25, TAU - 0.25, 12, INK, 2.0, true)
+		elif worried:
 			g.draw_line(eye + Vector2(-5, -14 + side * 2), eye + Vector2(5, -14 - side * 2), INK, 2.6, true)
 		elif not happy:
 			g.draw_arc(eye + Vector2(0, -10), 5.5, PI + 0.3, TAU - 0.3, 12, INK, 2.3, true)
@@ -686,7 +708,7 @@ func configure_shop_portraits() -> void:
 		shop_portrait_clips.append(clip)
 		var buy := Button.new()
 		buy.name = "ShopBuy%d" % index
-		buy.position = clip.position + Vector2(9, 154)
+		buy.position = clip.position + Vector2(9, 149)
 		buy.size = Vector2(120, 27)
 		buy.focus_mode = Control.FOCUS_NONE
 		buy.add_theme_font_override("font", bold)
@@ -705,7 +727,7 @@ func configure_shop_portraits() -> void:
 		var slot: int = g.CHUTE_SHOP_ORDER.find(index + 4)
 		var buy := Button.new()
 		buy.name = "ShopChuteBuy%d" % index
-		buy.position = Vector2(56 + (slot % 3) * 152, 451 + floori(slot / 3.0) * 200)
+		buy.position = Vector2(56 + (slot % 3) * 152, 446 + floori(slot / 3.0) * 200)
 		buy.size = Vector2(120, 27)
 		buy.focus_mode = Control.FOCUS_NONE
 		buy.add_theme_font_override("font", bold)
@@ -736,7 +758,7 @@ func sync_ui() -> void:
 		buy.text = ("EQUIPPED" if g.selected_character == skin else "EQUIP") if owned else "BUY  %d" % g.CHARACTER_PRICES[skin]
 		buy.disabled = (g.selected_character == skin) if owned else g.credits < g.CHARACTER_PRICES[skin]
 		buy.tooltip_text = ("Owned" if owned else ("%d more credits needed" % (g.CHARACTER_PRICES[skin] - g.credits) if buy.disabled else "Unlock this jelly"))
-		shop_portrait_clips[index].modulate = Color.WHITE if owned else Color(0.72, 0.72, 0.78, 1)
+		shop_portrait_clips[index].modulate = Color.WHITE
 	for index in range(shop_chute_buttons.size()):
 		var chute := index + 4
 		var owned: bool = g.owns_chute(chute)
@@ -834,22 +856,23 @@ func draw_race_hud() -> void:
 	text_at(Vector2(270, 97), g.DIFFICULTY_NAMES[g.round_difficulty()], 11, INK)
 	# Every height is shaded by the actual braking limit, not an arbitrary zone.
 	ink_box(Rect2(10, 278, 29, 406), CREAM, 13)
-	for pixel in range(383):
-		var altitude: float = (383.0 - pixel - 0.5) / 383.0 * g.start_altitude
-		g.draw_rect(Rect2(16, 291 + pixel, 17, 1), g.deployment_color(altitude))
-	var limit_y: float = 674 - g.red_altitude / g.start_altitude * 383
-	g.draw_line(Vector2(12, limit_y), Vector2(37, limit_y), INK, 2, true)
-	for altitude in range(0, ceili(g.start_altitude), 12):
-		var y: float = 674 - altitude / g.start_altitude * 383
-		g.draw_line(Vector2(12, y), Vector2(37, y), INK, 1.2, true)
-		text_at(Vector2(54, y), str(altitude), 10, INK)
+	# Leave a 2px cream rim inside the dark frame, preserving the gauge's
+	# altitude mapping between the marker's top and bottom positions.
+	for pixel in range(396):
+		var y := 283.0 + pixel
+		var cap_distance := maxf(0.0, absf(y + 0.5 - 481.0) - 188.5)
+		var half_width := sqrt(maxf(0.0, 9.5 * 9.5 - cap_distance * cap_distance))
+		var altitude: float = clampf((674.0 - y - 0.5) / 383.0, 0.0, 1.0) * g.start_altitude
+		g.draw_rect(Rect2(24.5 - half_width, y, half_width * 2.0, 1.0), g.deployment_color(altitude))
 	var marker_y: float = 674 - clampf(r.alt / g.start_altitude, 0, 1) * 383
-	g._ellipse(Vector2(24, marker_y), Vector2(12, 12), INK)
-	g._ellipse(Vector2(24, marker_y), Vector2(8, 8), g.deployment_color(float(r.alt)))
+	g._ellipse(Vector2(24.5, marker_y), Vector2(12, 12), INK)
+	g._ellipse(Vector2(24.5, marker_y), Vector2(8, 8), g.COLORS[0])
 	var status := hud_status()
 	var status_width: float = bold.get_string_size(status.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x + 36
-	ink_box(Rect2(270 - status_width / 2, 731, status_width, 29), status.color, 14)
-	text_at(Vector2(270, 745), status.text, 14, INK)
+	# Keep flight messages just above the action panel, below racer labels.
+	var status_top: float = g.action.position.y - 45.0
+	ink_box(Rect2(270 - status_width / 2, status_top, status_width, 29), status.color, 14)
+	text_at(Vector2(270, status_top + 14), status.text, 14, INK)
 	if g.state == "countdown" or g.jump_flash > 0:
 		draw_jump_countdown()
 
@@ -916,31 +939,57 @@ func render_celebration() -> void:
 	var final: bool = g.state == "podium"
 	var order: Array[int] = g.reaction_order() if final else g._ranked()
 	var winner: int = order[0]
-	for k in range(42):
-		var x: float = fposmod(k * 83.0 + sin(g.animation_time * 2 + k) * 18, 540)
-		var y: float = fposmod(k * 117.0 + g.animation_time * (24 + k % 5 * 7), 850)
-		g.draw_set_transform(Vector2(x, y), g.animation_time + k)
-		g.draw_rect(Rect2(-3, -6, 6, 12), g.COLORS[k % 4] if k % 3 else CORAL)
-	g.draw_set_transform_matrix(Transform2D.IDENTITY)
+	if final and order.find(0) in [0, 1, 2]:
+		draw_tournament_confetti()
 	ink_box(Rect2(32, 24, 476, 111), CORAL, 26)
 	text_at(Vector2(270, 48), "FLIGHT CLUB CHAMPION" if final else "ROUND %d • FRESHLY LANDED" % g.round_number, 15, INK)
 	text_at(Vector2(270, 87), ("YOU TAKE THE CAKE!" if winner == 0 else g.NAMES[winner] + " TAKES THE CAKE!") if g.racers[winner].safe or final else "EVERYBODY IS TOAST!", 25, INK)
 	text_at(Vector2(270, 117), "Gravity: 0. Wobble: 1." if winner == 0 else "Please clap. Their arms are jelly.", 14, INK)
+	# Keep the round recap smaller than the tournament finale.
+	var podium_scale := 1.0 if final else 0.82
 	var tops := [387.0, 425.0, 450.0]
 	for rank in range(3):
-		var x: float = [270.0, 132.0, 408.0][rank]
-		var top: float = tops[rank]
-		ink_box(Rect2(x - 53, top, 106, 510 - top), [CORAL, Color("c5dbe7"), Color("e5ad88")][rank], 13)
+		var x: float = 270.0 + ([270.0, 132.0, 408.0][rank] - 270.0) * podium_scale
+		var top: float = 510.0 + (tops[rank] - 510.0) * podium_scale
+		ink_box(Rect2(x - 53 * podium_scale, top, 106 * podium_scale, 510 - top), [CORAL, Color("c5dbe7"), Color("e5ad88")][rank], 13)
 		text_at(Vector2(x, top + 27), str(rank + 1), 26, INK)
-		jelly(Vector2(x, top), order[rank], false, false, 1.3 if rank == 0 else 1.05)
+		jelly(Vector2(x, top), order[rank], false, false, (1.3 if rank == 0 else 1.05) * podium_scale)
 		podium_gag(Vector2(x, top), rank)
 		pill(Vector2(x, 531), g.NAMES[order[rank]], order[rank] == 0)
+	g.draw_set_transform_matrix(Transform2D.IDENTITY)
 	draw_results_table(order, final)
 	text_at(Vector2(270, 817), ("+%d CREDITS • TOURNAMENT COMPLETE" % g.tournament_reward) if final and g.tournament_paid else "CREDITS PAID AFTER ALL 3 ROUNDS", 13, INK)
 	text_at(Vector2(270, 842), "WINS %d   •   BEST %s" % [g.wins, g._time_text(g.best_time)] if final else "Soft landings score points. Pancakes score sympathy.", 12, INK)
 
+
+# Paper flutter uses no gameplay randomness.
+func draw_tournament_confetti() -> void:
+	var palette := [Color("ffca39"), Color("ff7f9f"), Color("70d9da"), Color("b29bff"), Color("fff1d0")]
+	var time: float = g.podium_dialogue_time
+	for k in range(64):
+		var phase: float = k * 2.39996
+		var speed: float = 38.0 + (k % 7) * 7.0
+		var y: float = fposmod(k * 97.0 + time * speed, 810.0) - 45.0
+		var x: float = fposmod(k * 83.0 + sin(time * 1.5 + phase) * 24.0 + time * (4.0 + k % 3), 580.0) - 20.0
+		var fade: float = 1.0 - smoothstep(570.0, 755.0, y)
+		var tint: Color = palette[k % palette.size()]
+		tint.a = fade * 0.9
+		var flutter: float = 0.25 + absf(cos(time * 3.0 + phase)) * 0.75
+		g.draw_set_transform(Vector2(x, y), phase + time * (0.7 + (k % 5) * 0.35), Vector2(flutter, 1.0))
+		if k % 4 == 0:
+			g.draw_colored_polygon(PackedVector2Array([Vector2(-4, -3), Vector2(4, -3), Vector2(0, 5)]), tint)
+		elif k % 4 == 1:
+			g.draw_circle(Vector2.ZERO, 2.8, tint, true, -1, true)
+		else:
+			g.draw_rect(Rect2(-2.5, -5.0, 5.0, 10.0), tint)
+			g.draw_line(Vector2(-1.5, -3), Vector2(-1.5, 2), Color(1, 1, 1, fade * 0.4), 1.0, true)
+	g.draw_set_transform_matrix(Transform2D.IDENTITY)
 # Separate phases keep the podium readable while each jelly has its own routine.
 func podium_pose(rank: int, time: float) -> Dictionary:
+	if g.state == "results":
+		var breath := sin(time * 1.8 + rank * 1.7)
+		var width := 1.0 + breath * 0.009
+		return {"offset": Vector2(0, -breath * 1.2), "lean": breath * 0.018, "stretch": Vector2(width, 1.0 / width)}
 	var phase := time * 5.0 + rank * 1.7
 	var offset := Vector2.ZERO
 	var lean := 0.0
@@ -961,6 +1010,9 @@ func podium_pose(rank: int, time: float) -> Dictionary:
 	return {"offset": offset, "lean": lean, "stretch": Vector2(width, 1.0 / width)}
 
 func podium_arm_angle(rank: int, side: int, time: float) -> float:
+	if g.state == "results":
+		var resting_angle: float = [-1.5, 0.5, -0.35][clampi(rank, 0, 2)]
+		return side * (resting_angle + sin(time * 1.8 + rank + side) * 0.06)
 	var conflict := fposmod(g.podium_dialogue_time, 12.0)
 	if rank == 1 and conflict > 3 and conflict < 5.5:
 		return -1.7 if side == 1 else 0.3
@@ -976,15 +1028,38 @@ func podium_arm_angle(rank: int, side: int, time: float) -> float:
 		2: return side * (-1.35 + sin(time * 5 + side) * 0.65)
 	return side * -0.28
 
+# Trace the rounded box and tail as one silhouette, with no seam at the join.
+func draw_podium_bubble(center: Vector2, width: float) -> void:
+	var outline := PackedVector2Array()
+	var half := width * 0.5
+	var radius := 12.0
+	var corners := [Vector2(half - radius, -4), Vector2(half - radius, 4), Vector2(-half + radius, 4), Vector2(-half + radius, -4)]
+	for corner in range(4):
+		if corner == 2:
+			outline.append(center + Vector2(8, 16))
+			outline.append(center + Vector2(1, 25))
+			outline.append(center + Vector2(-6, 16))
+		for step in range(9):
+			var angle: float = -PI * 0.5 + corner * PI * 0.5 + step * PI / 16.0
+			outline.append(center + corners[corner] + Vector2(cos(angle), sin(angle)) * radius)
+	var shadow := PackedVector2Array()
+	for point in outline:
+		shadow.append(point + Vector2(1, 3))
+	g.draw_colored_polygon(shadow, Color("40133390"))
+	g.draw_colored_polygon(outline, CREAM)
+	outline.append(outline[0])
+	g.draw_polyline(outline, INK, 3.0, true)
 func podium_gag(feet: Vector2, rank: int) -> void:
+	if g.state != "podium":
+		return
 	var t: float = g.animation_time
 	# Brief speech bubbles take turns rather than talking over one another.
 	if g.podium_speaker == rank and fposmod(g.podium_dialogue_time, 2.8) < 2.45:
-		var center := feet + Vector2(0, -148 if rank == 0 else -200 if rank == 2 and g.state == "podium" else -125)
+		var center := feet + Vector2(0, -148 if rank == 0 else -125)
 		var words: String = g.podium_line
 		var width: float = bold.get_string_size(words, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 20
-		ink_box(Rect2(center - Vector2(width / 2, 16), Vector2(width, 32)), CREAM, 12)
-		g.draw_colored_polygon(PackedVector2Array([center + Vector2(-5, 14), center + Vector2(3, 24), center + Vector2(8, 14)]), CREAM)
+		center.x = clampf(center.x, width / 2 + 8, 532 - width / 2)
+		draw_podium_bubble(center, width)
 		text_at(center, words, 11, INK)
 	if rank == 1:
 		# Comic applause flashes beside the clapping hands.
@@ -1219,7 +1294,7 @@ func render_shop() -> void:
 			var top_left := Vector2(44 + (index % 3) * 152, 294 + floori(index / 3.0) * 200)
 			var owned: bool = g.owns_chute(chute)
 			ink_box(Rect2(top_left, Vector2(144, 192)), CREAM, 16)
-			_sprite(canopies[chute], Rect2(top_left + Vector2(12, 36), Vector2(120, 80)), Color.WHITE if owned else Color(0.72, 0.72, 0.78, 1))
+			_sprite(canopies[chute], Rect2(top_left + Vector2(12, 36), Vector2(120, 80)), Color.WHITE)
 			if not owned:
 				var lock := top_left + Vector2(123, 20)
 				g._ellipse(lock, Vector2(13, 13), CREAM)
@@ -1227,8 +1302,8 @@ func render_shop() -> void:
 				ink_box(Rect2(lock + Vector2(-6, -2), Vector2(12, 10)), CORAL, 3)
 				g.draw_line(lock + Vector2(0, 1), lock + Vector2(0, 4), INK, 1.5, true)
 			var words: PackedStringArray = g.CHUTE_NAMES[chute].split(" ", false, 1)
-			text_at(top_left + Vector2(72, 131), words[0], 13, INK)
-			text_at(top_left + Vector2(72, 146), words[1], 13, INK)
+			text_at(top_left + Vector2(72, 126), words[0], 13, INK)
+			text_at(top_left + Vector2(72, 141), words[1], 13, INK)
 	if g.shop_category == 0:
 		for index in range(COLLECTION_IDS.size()):
 			var skin := index + 4
@@ -1243,7 +1318,7 @@ func render_shop() -> void:
 			var name_size := 14
 			while bold.get_string_size(g.CHARACTER_NAMES[skin], HORIZONTAL_ALIGNMENT_LEFT, -1, name_size).x > 130:
 				name_size -= 1
-			text_at(top_left + Vector2(72, 145), g.CHARACTER_NAMES[skin], name_size, INK)
+			text_at(top_left + Vector2(72, 140), g.CHARACTER_NAMES[skin], name_size, INK)
 	if not g.shop_message.is_empty():
 		text_at(Vector2(270, 899), g.shop_message, 11, INK)
 
