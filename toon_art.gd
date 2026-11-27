@@ -694,14 +694,26 @@ func render_menu() -> void:
 func eyes_are_closed(mood: String, i: int, side: int) -> bool:
 	if mood in ["landed", "dizzy", "champion", "runner_up", "relieved", "disappointed", "proud"]:
 		return false
-	var blink := fposmod(g.animation_time + i * 1.2, 3.7) < 0.13 and mood != "panic"
-	if i == 0 and mood in ["confident", "excited", "relief"]:
-		return blink or (side == -1 and fposmod(g.animation_time, 2.8) < 0.65)
-	if i == 1:
-		return blink or mood == "victory"
-	if i == 2:
-		return blink
-	return blink or (mood == "relief" and side == 1)
+	# Stable within a frame, independent per character and rerolled every round.
+	# Rendering never consumes the gameplay RNG.
+	var animation_seed: int = 0 if is_instance_valid(portrait_target) else g.eye_seed
+	var seed_value := hash(str(animation_seed) + ":" + str(i))
+	var period := 1.8 + float(seed_value % 170) / 100.0
+	var clock: float = g.animation_time + float(seed_value % 240) / 100.0
+	var beat := floori(clock / period)
+	var phase := fposmod(clock, period)
+	var expression := hash(str(seed_value) + ":" + str(beat)) % 5
+	if phase < 0.12:
+		return true
+	if phase > 0.48 or mood == "panic":
+		return false
+	# Left wink, right wink, both shut, double blink, or eyes open.
+	match expression:
+		0: return side == -1
+		1: return side == 1
+		2: return true
+		3: return phase > 0.24 and phase < 0.36
+	return false
 
 
 func _flight_button_style(color: Color) -> StyleBoxFlat:

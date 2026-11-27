@@ -48,6 +48,9 @@ var owned_chutes: Array[int] = [0, 1, 2, 3]
 var chute_buttons: Array[Button] = []
 var character_confirmed := false
 var racer_skins: Array[int] = [0, 1, 2, 3]
+var racer_chutes: Array[int] = [0, 1, 2, 3]
+var eye_seed := 0
+var reactive_round := false
 var character_buttons: Array[Button] = []
 var carousel_time := 1.0
 var carousel_direction := 1.0
@@ -275,6 +278,8 @@ func _label(x: float, y: float, width: float, height: float, font_size: int) -> 
 	return label
 
 func _reset_racers() -> void:
+	reactive_round = false
+	eye_seed = dialogue_rng.randi()
 	round_learned = false
 	round_scored = false
 	first_landing_time = -1.0
@@ -286,6 +291,7 @@ func _reset_racers() -> void:
 		racers.append({"alt": start_altitude, "speed": 0.0, "open": false,
 			"deploy": 0.0, "done": false, "safe": false, "time": 0.0,
 			"target": _rival_deploy_height(), "deploy_altitude": -1.0, "deploy_speed": 0.0, "squash": 0.0, "finish_age": 0.0})
+	_cache_rival_plan()
 	camera_alt = start_altitude
 	race_time = 0.0
 
@@ -329,6 +335,7 @@ func _action() -> void:
 			tournament_reward = 0
 			totals = [0, 0, 0, 0]
 			round_number = 1
+			_assign_characters()
 			_shuffle_difficulties()
 			_start_round()
 		"results":
@@ -375,7 +382,7 @@ func _start_round() -> void:
 	start_altitude = OPTIMAL_HIGH + TERMINAL * (freefall_seconds - 0.5)
 	var previous_rival_height := 0.0
 	if tournament_form.size() >= 2 and racers.size() == 4:
-		previous_rival_height = (float(racers[1].target) + float(racers[2].target) + float(racers[3].target)) / 3.0
+		previous_rival_height = (float(racers[1].planned_target) + float(racers[2].planned_target) + float(racers[3].planned_target)) / 3.0
 	round_player_skill = player_skill
 	round_rival_adjustment = _tournament_rival_adjustment()
 	round_rival_variation = 0.18 if tournament_form.size() >= 2 and not is_zero_approx(round_rival_adjustment) else 0.3
@@ -383,6 +390,7 @@ func _start_round() -> void:
 	rival_round_form = rng.randf_range(-form_range, form_range)
 	_reset_racers()
 	_balance_finale(previous_rival_height)
+	_plan_rival_openings()
 	state = "countdown"
 	heading.add_theme_font_size_override("font_size", 64)
 	timer = 3.0
@@ -404,6 +412,7 @@ func _deploy(i: int) -> void:
 	racers[i].deploy_speed = float(racers[i].speed)
 	racers[i].open = true
 	if i == 0:
+		_react_to_early_deployment()
 		action.text = "CHUTE OPEN!"
 		_tone(660.0, 0.12)
 
@@ -556,6 +565,12 @@ func _record_player_round(place: int) -> void:
 	if round_learned:
 		return
 	round_learned = true
+	if reactive_round and racers[0].safe:
+		# Evaluate against the untouched plan, never the staged chase.
+		place = 0
+		for slot in range(1, 4):
+			if racers[slot].planned_time < racers[0].time:
+				place += 1
 	_learn_player_round(place)
 	tournament_form.append({"safe": bool(racers[0].safe), "place": clampi(place, 0, 3), "score": recent_performance.back()})
 	_save_record()
@@ -973,13 +988,16 @@ func reaction_order() -> Array[int]:
 
 func _assign_characters() -> void:
 	racer_skins.assign([selected_character])
-	if selected_character < 4:
-		for character in range(4):
-			if character != selected_character:
-				racer_skins.append(character)
-	else:
-		for offset in range(1, 4):
-			racer_skins.append((selected_character + offset) % CHARACTER_NAMES.size())
+	var characters: Array[int] = owned_characters.duplicate()
+	characters.erase(selected_character)
+	var chutes: Array[int] = owned_chutes.duplicate()
+	chutes.erase(selected_chute)
+	racer_chutes.assign([selected_chute])
+	for slot in range(3):
+		var index := rng.randi_range(0, characters.size() - 1)
+		racer_skins.append(characters.pop_at(index))
+		index = rng.randi_range(0, chutes.size() - 1)
+		racer_chutes.append(chutes.pop_at(index))
 	for slot in range(4):
 		COLORS[slot] = CHARACTER_COLORS[racer_skins[slot]]
 		NAMES[slot] = "YOU" if slot == 0 else CHARACTER_NAMES[racer_skins[slot]]
@@ -1018,7 +1036,7 @@ func _cycle_chute(direction: int) -> void:
 	queue_redraw()
 
 func chute_skin(slot: int) -> int:
-	return selected_chute if slot == 0 else racer_skins[slot] % 4
+	return selected_chute if slot == 0 else racer_chutes[slot]
 
 func _return_to_menu() -> void:
 	tournament_form.clear()
@@ -1083,8 +1101,68 @@ func _tournament_rival_adjustment() -> float:
 
 func _rival_deploy_height() -> float:
 	var limits: Vector2 = RIVAL_DEPLOY_RANGES[round_difficulty()]
-	var adaptation := lerpf(2.5, -2.0, round_player_skill) - 0.25
+	var adaptation := lerpf(4.0, -3.0, round_player_skill) - 0.5
 	return clampf(rng.randf_range(limits.x, limits.y) + rival_round_form + rng.randf_range(-round_rival_variation, round_rival_variation) + adaptation + round_rival_adjustment, red_altitude + 1.2, 24.0)
+
+# Preserve the average challenge while spreading the three openings in time.
+# A small minority of rounds deliberately retain a close pack.
+func _plan_rival_openings() -> void:
+	var center := (float(racers[1].target) + float(racers[2].target) + float(racers[3].target)) / 3.0
+	var gap := rng.randf_range(0.15, 0.55) if rng.randf() < 0.08 else rng.randf_range(1.8, 2.6)
+	center = clampf(center, red_altitude + 1.2 + gap, 27.0 - gap)
+	var offsets: Array[float] = [-gap, 0.0, gap]
+	for slot in range(1, 4):
+		var index := rng.randi_range(0, offsets.size() - 1)
+		racers[slot].target = center + offsets.pop_at(index)
+	_cache_rival_plan()
+
+func _cache_rival_plan() -> void:
+	for slot in range(1, 4):
+		racers[slot].planned_target = racers[slot].target
+		racers[slot].planned_time = _planned_finish_time(racers[slot].target)
+
+func _planned_finish_time(target: float) -> float:
+	var altitude := start_altitude
+	var speed := 0.0
+	var inflation := 0.0
+	var elapsed := 0.0
+	var opened := false
+	while altitude > 0.0:
+		opened = opened or altitude <= target
+		if opened:
+			inflation = minf(1.0, inflation + PHYSICS_STEP / 0.65)
+			speed = move_toward(speed, 8.0 if altitude > 35.0 else 2.0, 8.0 * inflation * PHYSICS_STEP)
+		else:
+			speed = minf(TERMINAL, speed + GRAVITY * PHYSICS_STEP)
+		altitude -= speed * PHYSICS_STEP
+		elapsed += PHYSICS_STEP
+	return elapsed
+
+func _react_to_early_deployment() -> void:
+	var earliest := 0.0
+	for slot in range(1, 4):
+		earliest = maxf(earliest, float(racers[slot].target))
+	# At least half a second before even the most cautious planned opponent.
+	if float(racers[0].alt) < earliest + 6.0:
+		return
+	reactive_round = true
+	var order: Array[int] = [1, 2, 3]
+	var delay := rng.randf_range(0.18, 0.32)
+	for rank in range(3):
+		var slot: int = order.pop_at(rng.randi_range(0, order.size() - 1))
+		var altitude: float = racers[slot].alt
+		var speed: float = racers[slot].speed
+		var remaining := delay
+		while remaining > 0.0:
+			var step := minf(PHYSICS_STEP, remaining)
+			speed = minf(TERMINAL, speed + GRAVITY * step)
+			altitude -= speed * step
+			remaining -= step
+		# Never force a later or unsafe opening. The original plan remains intact.
+		racers[slot].target = maxf(float(racers[slot].planned_target), altitude)
+		delay += rng.randf_range(0.18, 0.34) + round_player_skill * 0.1
+		if rank == 0 and rng.randf() < 0.2:
+			delay += rng.randf_range(0.15, 0.3)
 
 func _begin_podium_dialogue() -> void:
 	podium_dialogue_time = 0.0
@@ -1164,10 +1242,16 @@ func _learn_player_round(place: int) -> void:
 		var weight := float(index + 1)
 		weighted += recent_performance[index] * weight
 		weights += weight
-	long_term_skill = lerpf(long_term_skill, performance, 0.12 if learned_rounds < 6 else 0.06)
-	var target := weighted / weights * 0.7 + long_term_skill * 0.3
+	var calibration := learned_rounds < 9
+	long_term_skill = lerpf(long_term_skill, performance, 0.3 if calibration else 0.06)
+	var recent_weight := 0.9 if calibration else 0.7
+	var target := weighted / weights * recent_weight + long_term_skill * (1.0 - recent_weight)
 	# Consecutive crashes grant relief; one unlucky jump has a small effect.
 	target = maxf(0.0, target - minf(failure_streak * 0.035 + struggle_streak * 0.025, 0.18))
 	var max_change := 0.05 if target > player_skill else (0.08 if struggle_streak >= 2 else 0.035)
+	if calibration:
+		# Each initial tournament has a distinct, progressively gentler learning rate.
+		var rates := [0.16, 0.11, 0.075]
+		max_change = rates[int(learned_rounds / 3.0)] * (1.15 if target < player_skill else 1.0)
 	player_skill = clampf(move_toward(player_skill, target, max_change), 0.0, 1.0)
 	learned_rounds += 1

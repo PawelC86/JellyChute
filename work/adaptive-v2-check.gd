@@ -24,7 +24,7 @@ func run_checks() -> void:
 	for trial in range(24):
 		var before: float = game.player_skill
 		outcome(game, true, 0)
-		assert(game.player_skill >= before and game.player_skill - before <= 0.050001)
+		assert(game.player_skill >= before - 0.015 and game.player_skill - before <= (0.160001 if trial < 3 else (0.110001 if trial < 6 else (0.075001 if trial < 9 else 0.050001))))
 	assert(game.player_skill > 0.85)
 	var peak: float = game.player_skill
 	outcome(game, false, 3)
