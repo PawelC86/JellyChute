@@ -8,7 +8,7 @@ from collections import deque
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-IDS = ("cat", "dog", "dragon", "ninja", "bee", "unicorn", "robot", "ghost", "chef")
+IDS = ("cat", "dog", "dragon", "bling", "bee", "unicorn", "robot", "ghost", "chef")
 source = ROOT / "work/source-art/collection"
 target = ROOT / "assets/toon/collection"
 target.mkdir(parents=True, exist_ok=True)

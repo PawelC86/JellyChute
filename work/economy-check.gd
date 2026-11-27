@@ -34,7 +34,7 @@ func run_checks() -> void:
 	assert(game.credits == 345 and game.career_points == 345)
 	assert(game.owns_character(7), "Migration must preserve a previously confirmed premium skin")
 	assert(not FileAccess.file_exists(game.legacy_save_path))
-	assert(game.CHARACTER_PRICES == [0, 0, 0, 0, 500, 500, 300, 300, 200, 500, 300, 200, 200])
+	assert(game.CHARACTER_PRICES == [0, 0, 0, 0, 500, 500, 300, 500, 200, 500, 300, 200, 200])
 	game.owned_characters.assign([0, 1, 2, 3])
 	game.selected_character = 0
 	game._assign_characters()

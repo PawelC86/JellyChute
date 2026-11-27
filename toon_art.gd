@@ -17,8 +17,8 @@ var boots: Array[Texture2D] = []
 var collection_regions: Dictionary = {}
 var collection_heads: Array[Texture2D] = []
 var collection_extras: Array[Texture2D] = []
-const COLLECTION_IDS := ["cat", "dog", "dragon", "ninja", "bee", "unicorn", "robot", "ghost", "chef"]
-const HEAD_RECTS := [Rect2(-22, -87, 44, 28), Rect2(-35, -85, 70, 40), Rect2(-26, -94, 52, 34), Rect2(-28, -78, 56, 17), Rect2(-20, -99, 40, 35), Rect2(-24, -101, 48, 39), Rect2(-24, -93, 48, 34), Rect2(-12, -91, 24, 26), Rect2(-29, -109, 58, 46)]
+const COLLECTION_IDS := ["cat", "dog", "dragon", "bling", "bee", "unicorn", "robot", "ghost", "chef"]
+const HEAD_RECTS := [Rect2(-22, -87, 44, 28), Rect2(-35, -85, 70, 40), Rect2(-26, -94, 52, 34), Rect2(-26, -98, 66, 35), Rect2(-20, -99, 40, 35), Rect2(-24, -101, 48, 39), Rect2(-24, -93, 48, 34), Rect2(-12, -91, 24, 26), Rect2(-29, -109, 58, 46)]
 # Seat each painted headpiece into the scalp, rather than above the forehead.
 const HEAD_SEAT_Y := [-67.0, -67.0, -62.0, -59.0, -67.0, -62.0, -67.0, -67.0, -61.0]
 var props: Array[Texture2D] = []
@@ -219,8 +219,8 @@ func render() -> void:
 		render_celebration()
 		return
 	var flight: bool = g.state in ["race", "settle", "countdown"]
-	g.draw_rect(Rect2(0, 0, 540, 960), Color("28bee0"))
-	g.draw_texture_rect(sky, Rect2(0, 0, 540, 960), false, Color.WHITE)
+	g.draw_rect(g.responsive.background_rect(), Color("28bee0"))
+	g.draw_texture_rect(sky, g.responsive.background_rect(), false, Color.WHITE)
 	# The reference uses an open turquoise sky rather than a paper sun.
 	for i in range(7):
 		var y: float = flight_cloud_y(i)
@@ -228,7 +228,9 @@ func render() -> void:
 			cloud(Vector2(float((i * 191 + 45) % 540), y), 0.65 + float(i % 3) * 0.22)
 	var ground: float = g._ground_y() if flight else 760.0
 	if ground < 1250:
-		_sprite(landscape, Rect2(0, ground - 500, 540, 780))
+		var screen: Rect2 = g.responsive.background_rect()
+		var cover := maxf(1.0, maxf(screen.size.x / 540.0, (screen.end.y - ground) / 280.0))
+		_sprite(landscape, Rect2((540.0 - 540.0 * cover) * 0.5, ground - 500.0 * cover, 540.0 * cover, 780.0 * cover))
 	if flight:
 		g._draw_flight_world()
 		if g.state == "countdown" or (g.state == "race" and g.race_time < 2):
@@ -314,9 +316,15 @@ func cloud(pos: Vector2, size: float) -> void:
 	_sprite(texture, Rect2(pos - Vector2(68, 32) * size, Vector2(136, 64) * size))
 
 func pad(feet: Vector2, i: int) -> void:
-	var index: int = [3, 4, 5, 6][g.racer_skins[i] % 4]
-	# Feet meet the top face 22% down the source oval, not the sprite bounds.
-	_sprite(props[index], Rect2(feet - Vector2(44, 7.6), Vector2(88, 34)))
+	# Resolve the actual participant, including every premium character.
+	var color: Color = g.CHARACTER_COLORS[g.racer_skins[i]]
+	# A dark ink rim and shaded side retain the original low oval silhouette.
+	g._ellipse(feet + Vector2(0, 17), Vector2(46, 11), Color("40133330"))
+	g._ellipse(feet + Vector2(0, 10), Vector2(44, 15), INK)
+	g._ellipse(feet + Vector2(0, 10), Vector2(41, 12), color.darkened(0.28))
+	g._ellipse(feet + Vector2(0, 1), Vector2(44, 10), INK)
+	g._ellipse(feet + Vector2(0, 1), Vector2(41, 7), color)
+	g._ellipse(feet + Vector2(-16, -1), Vector2(12, 1.6), color.lightened(0.4))
 
 func jelly(feet: Vector2, i: int, flight: bool, hero: bool = false, size: float = 1.25) -> void:
 	var r: Dictionary = g.racers[i]
@@ -372,7 +380,7 @@ func jelly(feet: Vector2, i: int, flight: bool, hero: bool = false, size: float 
 			5: # Eager little hops.
 				feet.y -= maxf(0, sin(g.animation_time * 4.2)) * 3.5
 			6: lean += sin(g.animation_time * 2.4) * 0.025
-			7: lean *= 0.35
+			7: lean += sin(g.animation_time * 3.5) * 0.035
 			8: feet.y += sin(g.animation_time * 5.0) * 2
 			9: lean += sin(g.animation_time * 1.9) * 0.025
 			10: lean = snappedf(lean, 0.025)
@@ -471,7 +479,7 @@ func recap_gaze(rank: int, time: float) -> Vector2:
 	return poses[(beat + 3) % 4].lerp(poses[beat], transition)
 
 func face(i: int, mood: String, clock: float) -> void:
-	var recap_eyes: bool = g.state == "results" and mood in ["champion", "runner_up", "relieved"]
+	var recap_eyes: bool = not is_instance_valid(portrait_target) and g.state == "results" and mood in ["champion", "runner_up", "relieved"]
 	var recap_rank: int = g.reaction_order().find(g.racer_skins.find(i)) if recap_eyes else -1
 	var gaze := recap_gaze(recap_rank, g.animation_time) if recap_eyes else Vector2.ZERO
 	var dizzy := mood == "dizzy"
@@ -498,7 +506,7 @@ func face(i: int, mood: String, clock: float) -> void:
 		elif eyes_are_closed(mood, i, side):
 			g.draw_arc(eye + Vector2(0, 4), 6.5, PI + 0.15, TAU - 0.15, 14, INK, 3, true)
 		else:
-			var scale_eye := 0.85 if i == 7 else (1.16 if (i == 1 and side == 1) else 1.0)
+			var scale_eye := 1.16 if (i == 1 and side == 1) else 1.0
 			var eye_height := 1.0 + sin(g.animation_time * 2.2 + recap_rank + side * 0.4) * 0.045 if recap_eyes else 1.0
 			g._ellipse(eye, Vector2(9, 11 * eye_height) * scale_eye, INK)
 			g._ellipse(eye, Vector2(7.4, 9.4 * eye_height) * scale_eye, CREAM)
@@ -515,9 +523,8 @@ func face(i: int, mood: String, clock: float) -> void:
 				look = gaze * (0.8 if i == 7 else 1.0)
 			g._ellipse(eye + look, Vector2(3.4, 5.5), INK)
 			g._ellipse(eye + look + Vector2(-1, -2), Vector2(1.3, 1.8), Color.WHITE)
-		if i != 7:
-			g._ellipse(Vector2(side * 20, -36), Vector2(5.5, 3.8), Color("f08087"))
-			g._ellipse(Vector2(side * 21, -37), Vector2(1.5, 1.5), Color("ffbdad"))
+		g._ellipse(Vector2(side * 20, -36), Vector2(5.5, 3.8), Color("f08087"))
+		g._ellipse(Vector2(side * 21, -37), Vector2(1.5, 1.5), Color("ffbdad"))
 		if recap_eyes:
 			var lift := sin(g.animation_time * 1.6 + recap_rank * 1.8 + side * 0.6) * 1.5
 			g.draw_arc(eye + Vector2(0, -11.5 + lift), 5.5, PI + 0.25, TAU - 0.25, 12, INK, 2.0, true)
@@ -525,8 +532,6 @@ func face(i: int, mood: String, clock: float) -> void:
 			g.draw_line(eye + Vector2(-5, -14 + side * 2), eye + Vector2(5, -14 - side * 2), INK, 2.6, true)
 		elif not happy:
 			g.draw_arc(eye + Vector2(0, -10), 5.5, PI + 0.3, TAU - 0.3, 12, INK, 2.3, true)
-	if i == 7:
-		return # The painted cloth mask hides cheeks and mouth; eyes carry the emotion.
 	if dizzy:
 		var mouth := PackedVector2Array()
 		for k in range(13):
@@ -639,18 +644,27 @@ func draw_dust() -> void:
 		g._ellipse(center, Vector2(radius, radius * 0.67), Color(0.93, 0.81, 0.61, alpha))
 		g._ellipse(center + Vector2(-radius * 0.2, -radius * 0.26), Vector2(radius * 0.6, radius * 0.5), Color(1.0, 0.91, 0.72, alpha * 0.9))
 
+func responsive_landscape(bounds: Rect2) -> void:
+	var width: float = 540 + game_ref.get_ref().responsive.extra_width
+	var ratio := width / 540.0
+	var bottom: float = bounds.end.y + g.responsive.extra_height * 0.5
+	_sprite(landscape, Rect2((540 - width) * 0.5, bottom - bounds.size.y * ratio, width, bounds.size.y * ratio))
+
 func render_menu() -> void:
 	var t: float = g.animation_time
-	_sprite(sky, Rect2(0, 0, 540, 960))
+	_sprite(sky, g.responsive.background_rect())
 	for i in range(4):
 		var x := fposmod(50 + i * 167.0 + t * (5 + i), 700.0) - 80
 		cloud(Vector2(x, 335 + i * 57), 0.6 + i * 0.13)
-	_sprite(landscape, Rect2(0, 226, 540, 780))
-	_sprite(menu_decor[0], Rect2(-30, -12, 294, 142))
+	responsive_landscape(Rect2(0, 226, 540, 780))
+	g.draw_set_transform(Vector2(0, -g.responsive.extra_height * 0.5))
+	_sprite(menu_decor[0], Rect2(-30 - g.responsive.extra_width * 0.5, -12, 294, 142))
 	# Logo, character art, chooser and records have separate vertical bands.
 	_sprite(logo, Rect2(30, 34 + sin(t * 1.1) * 2, 480, 240))
+	g.draw_set_transform(Vector2(0, -g.responsive.extra_height * 0.25))
 	text_at(Vector2(270, 291), "CHOOSE YOUR JELLY", 20, INK)
 	text_at(Vector2(270, 315), "%s • %d / %d" % [g.CHUTE_NAMES[g.selected_chute], g.selected_chute + 1, g.CHUTE_NAMES.size()], 11, INK)
+	g.draw_set_transform(Vector2.ZERO)
 	var progress: float = clampf(g.carousel_time / g.CAROUSEL_DURATION, 0, 1)
 	var eased := 1.0 - pow(1.0 - progress, 3)
 	var bounce := sin(progress * PI) * 12.0
@@ -664,9 +678,18 @@ func render_menu() -> void:
 	text_at(Vector2(270, 686), g.CHARACTER_TRAITS[g.selected_character], 15, INK)
 	for character in range(g.CHARACTER_NAMES.size()):
 		var center := Vector2(270 + (character - (g.CHARACTER_NAMES.size() - 1) * 0.5) * 22, 721)
-		g._ellipse(center, Vector2(7, 7) if character == g.selected_character else Vector2(5, 5), INK)
-		g._ellipse(center, Vector2(4.5, 4.5) if character == g.selected_character else Vector2(3, 3), g.CHARACTER_COLORS[character] if g.owns_character(character) else Color("b5b1bc"))
+		if not g.owns_character(character):
+			# Compact lock replaces the dot, retaining the same carousel spacing.
+			g.draw_arc(center + Vector2(0, -3), 3.3, PI, TAU, 16, INK, 2.2, true)
+			ink_box(Rect2(center + Vector2(-5, -2), Vector2(10, 8)), CREAM, 2)
+			g._ellipse(center + Vector2(0, 1), Vector2(1.2, 1.2), INK)
+			g.draw_line(center + Vector2(0, 1), center + Vector2(0, 3), INK, 1.4, true)
+		else:
+			g._ellipse(center, Vector2(7, 7) if character == g.selected_character else Vector2(5, 5), INK)
+			g._ellipse(center, Vector2(4.5, 4.5) if character == g.selected_character else Vector2(3, 3), g.CHARACTER_COLORS[character])
+	g.draw_set_transform(Vector2(0, g.responsive.extra_height * 0.5))
 	draw_career_points()
+	g.draw_set_transform(Vector2.ZERO)
 
 func eyes_are_closed(mood: String, i: int, side: int) -> bool:
 	if mood in ["landed", "dizzy", "champion", "runner_up", "relieved", "disappointed", "proud"]:
@@ -694,9 +717,10 @@ func _flight_button_style(color: Color) -> StyleBoxFlat:
 
 func configure_shop_portraits() -> void:
 	for index in range(COLLECTION_IDS.size()):
+		var slot: int = g.CHARACTER_SHOP_ORDER.find(index + 4)
 		var clip := Control.new()
 		clip.name = "ShopPortraitClip%d" % index
-		clip.position = Vector2(47 + (index % 3) * 152, 297 + floori(index / 3.0) * 200)
+		clip.position = Vector2(47 + (slot % 3) * 152, 297 + floori(slot / 3.0) * 200 - (8 if index == 3 else 0))
 		clip.size = Vector2(138, 130)
 		clip.clip_contents = true
 		clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -708,7 +732,7 @@ func configure_shop_portraits() -> void:
 		shop_portrait_clips.append(clip)
 		var buy := Button.new()
 		buy.name = "ShopBuy%d" % index
-		buy.position = clip.position + Vector2(9, 149)
+		buy.position = Vector2(56 + (slot % 3) * 152, 446 + floori(slot / 3.0) * 200)
 		buy.size = Vector2(120, 27)
 		buy.focus_mode = Control.FOCUS_NONE
 		buy.add_theme_font_override("font", bold)
@@ -783,6 +807,7 @@ func sync_ui() -> void:
 		g.home_button.size = Vector2(100, 56)
 		for label in [g.heading, g.detail, g.badge, g.stats]:
 			label.visible = false
+		g.responsive.apply_ui()
 		return
 	var flight: bool = g.state in ["countdown", "race", "settle"]
 	if flight:
@@ -825,6 +850,8 @@ func sync_ui() -> void:
 			set_action_style(CORAL, true)
 		ui_mode = "menu"
 
+	g.responsive.apply_ui()
+
 func hud_status() -> Dictionary:
 	var r: Dictionary = g.racers[0]
 	if g.state == "countdown":
@@ -839,6 +866,7 @@ func draw_race_hud() -> void:
 	var r: Dictionary = g.racers[0]
 	var order: Array[int] = g.live_order()
 	var place := order.find(0) + 1
+	g.draw_set_transform(Vector2(0, -g.responsive.extra_height * 0.5))
 	# Aligned, fixed header. No gameplay labels share its visual lane.
 	ink_box(Rect2(20, 23, 146, 57), CREAM, 17)
 	text_at(Vector2(93, 39), "ROUND", 10, INK)
@@ -854,6 +882,7 @@ func draw_race_hud() -> void:
 		g._ellipse(center, Vector2(5, 5), INK)
 		g._ellipse(center, Vector2(3.2, 3.2), CORAL if i < g.round_number else CREAM)
 	text_at(Vector2(270, 97), g.DIFFICULTY_NAMES[g.round_difficulty()], 11, INK)
+	g.draw_set_transform(Vector2.ZERO)
 	# Every height is shaded by the actual braking limit, not an arbitrary zone.
 	ink_box(Rect2(10, 278, 29, 406), CREAM, 13)
 	# Leave a 2px cream rim inside the dark frame, preserving the gauge's
@@ -934,17 +963,19 @@ func reaction_arm_angle(reaction: String, side: int, elapsed: float) -> float:
 
 
 func render_celebration() -> void:
-	_sprite(sky, Rect2(0, 0, 540, 960))
-	_sprite(landscape, Rect2(0, 255, 540, 780))
+	_sprite(sky, g.responsive.background_rect())
+	responsive_landscape(Rect2(0, 255, 540, 780))
 	var final: bool = g.state == "podium"
 	var order: Array[int] = g.reaction_order() if final else g._ranked()
 	var winner: int = order[0]
 	if final and order.find(0) in [0, 1, 2]:
 		draw_tournament_confetti()
+	g.draw_set_transform(Vector2(0, -g.responsive.extra_height * 0.5))
 	ink_box(Rect2(32, 24, 476, 111), CORAL, 26)
 	text_at(Vector2(270, 48), "FLIGHT CLUB CHAMPION" if final else "ROUND %d • FRESHLY LANDED" % g.round_number, 15, INK)
 	text_at(Vector2(270, 87), ("YOU TAKE THE CAKE!" if winner == 0 else g.NAMES[winner] + " TAKES THE CAKE!") if g.racers[winner].safe or final else "EVERYBODY IS TOAST!", 25, INK)
 	text_at(Vector2(270, 117), "Gravity: 0. Wobble: 1." if winner == 0 else "Please clap. Their arms are jelly.", 14, INK)
+	g.draw_set_transform(Vector2.ZERO)
 	# Keep the round recap smaller than the tournament finale.
 	var podium_scale := 1.0 if final else 0.82
 	var tops := [387.0, 425.0, 450.0]
@@ -1271,9 +1302,10 @@ func draw_winner_cup() -> void:
 
 func render_shop() -> void:
 	# A dedicated full-screen view; inventory will be designed separately.
-	g.draw_rect(Rect2(0, 0, 540, 960), Color("28bee0"))
-	g.draw_texture_rect(sky, Rect2(0, 0, 540, 960), false)
-	_sprite(landscape, Rect2(0, 560, 540, 780))
+	g.draw_rect(g.responsive.background_rect(), Color("28bee0"))
+	g.draw_texture_rect(sky, g.responsive.background_rect(), false)
+	responsive_landscape(Rect2(0, 560, 540, 780))
+	g.draw_set_transform(Vector2(0, -g.responsive.extra_height * 0.5))
 	text_at(Vector2(270, 58), "JELLY SHOP", 30, INK)
 	ink_box(Rect2(118, 103, 304, 65), CREAM, 22)
 	var center := Vector2(153, 135)
@@ -1287,6 +1319,7 @@ func render_shop() -> void:
 	while font_size > 12 and bold.get_string_size(amount, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > 210:
 		font_size -= 1
 	text_at(Vector2(285, 148), amount, font_size, INK)
+	g.draw_set_transform(Vector2.ZERO)
 	ink_box(Rect2(28, 278, 484, 634), CREAM, 26)
 	if g.shop_category == 1:
 		for index in range(g.CHUTE_IDS.size()):
@@ -1307,7 +1340,8 @@ func render_shop() -> void:
 	if g.shop_category == 0:
 		for index in range(COLLECTION_IDS.size()):
 			var skin := index + 4
-			var top_left := Vector2(44 + (index % 3) * 152, 294 + floori(index / 3.0) * 200)
+			var slot: int = g.CHARACTER_SHOP_ORDER.find(skin)
+			var top_left := Vector2(44 + (slot % 3) * 152, 294 + floori(slot / 3.0) * 200)
 			ink_box(Rect2(top_left, Vector2(144, 192)), g.CHARACTER_COLORS[skin].lightened(0.76), 16)
 			if not g.owns_character(skin):
 				var lock := top_left + Vector2(123, 20)
@@ -1315,6 +1349,10 @@ func render_shop() -> void:
 				g.draw_arc(lock + Vector2(0, -2), 4, PI, TAU, 14, INK, 2, true)
 				ink_box(Rect2(lock + Vector2(-6, -2), Vector2(12, 10)), CORAL, 3)
 				g.draw_line(lock + Vector2(0, 1), lock + Vector2(0, 4), INK, 1.5, true)
+			if skin == 7:
+				text_at(top_left + Vector2(72, 128), "2 CHAINZ,", 13, INK)
+				text_at(top_left + Vector2(72, 141), "NO BONES", 13, INK)
+				continue
 			var name_size := 14
 			while bold.get_string_size(g.CHARACTER_NAMES[skin], HORIZONTAL_ALIGNMENT_LEFT, -1, name_size).x > 130:
 				name_size -= 1
@@ -1337,8 +1375,6 @@ func collection_extra_parts(skin: int, clock: float, wind: float) -> Array[Dicti
 				var flutter := sin(clock * (3.4 if skin == 8 else 1.5))
 				var wing_scale := Vector2(side, 0.75 + flutter * 0.2)
 				parts.append({"transform": Transform2D(side * flutter * 0.14, wing_scale, 0, Vector2(side * 20, -44)), "rect": Rect2(0, -25, 39 if skin == 6 else 31, 37)})
-		7:
-			parts.append({"transform": Transform2D(-0.12 - wind * 0.6 + sin(clock * 1.4) * 0.12, Vector2(24, -65)), "rect": Rect2(-2, -9, 48, 21)})
 		10:
 			parts.append({"transform": Transform2D(0, Vector2(1, 0.65 + absf(cos(clock)) * 0.35), 0, Vector2(23, -38)), "rect": Rect2(0, -9, 23, 18)})
 	return parts
@@ -1380,7 +1416,8 @@ func collection_accessories(skin: int, mood: String, clock: float) -> void:
 				for side in [-1, 1]:
 					g.draw_colored_polygon(PackedVector2Array([Vector2(side * 6 - 2, -33), Vector2(side * 6 + 2, -33), Vector2(side * 6, -28)]), CREAM)
 		7:
-			pass # Hood and lower mask are painted into the torso: they cannot detach.
+			_sprite(collection_extras[skin - 4], Rect2(-25, -26, 50, 31))
+			g._star(Vector2(21, -21), 2.0 + sin(clock * 1.7) * 0.6, Color("fff2a7"))
 		8:
 			g._ellipse(Vector2(0, -37), Vector2(2.5, 2), Color("a76332"))
 		9:
@@ -1403,6 +1440,10 @@ func collection_mouth(skin: int, clock: float) -> void:
 		4:
 			for side in [-1, 1]:
 				g.draw_arc(Vector2(side * 3.5, -33), 4, 0.1, PI - 0.1, 12, INK, 1.8, true)
+		7:
+			ink_box(Rect2(-9, -35, 18, 7), CREAM, 3)
+			for tooth in [-3, 3]:
+				g.draw_line(Vector2(tooth, -35), Vector2(tooth, -29), Color("cb9135"), 1, true)
 		5, 6, 8, 12:
 			g._ellipse(Vector2(0, -30), Vector2(8, 7), INK)
 			g._ellipse(Vector2(1, -27), Vector2(5, 2.5), Color("ef7097"))

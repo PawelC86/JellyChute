@@ -1,5 +1,5 @@
 extends Node2D
-## All distances are metres. Drawing uses a fixed portrait canvas.
+## All distances are metres. Art uses uniform scaling inside a responsive portrait layout.
 const W := 540.0
 const H := 960.0
 const JELLY_HEIGHT_METRES := 1.0
@@ -33,9 +33,9 @@ var round_rival_variation := 0.3
 var round_learned := false
 const OPTIMAL_LOW := 16.0
 const OPTIMAL_HIGH := 21.0
-const CHARACTER_COLORS := [Color("ff779d"), Color("ffc857"), Color("a390ff"), Color("50dbbd"), Color("f5a66b"), Color("c99157"), Color("f67b76"), Color("5265a0"), Color("f3bc38"), Color("c6a4ed"), Color("98d4ca"), Color("b9e8f4"), Color("f16b7e")]
-const CHARACTER_NAMES := ["STAR", "MANGO", "BUBBLES", "PICKLE", "SIR POUNCE", "BARKLEY", "TOASTY", "SNEAKY BEAN", "BUZZBERT", "SIR SPARKLES", "WOBBLEBOT", "BOOBERRY", "CHEF WOBBLE"]
-const CHARACTER_TRAITS := ["BORN TO SHINE", "HAPPILY CLUELESS", "DRAMA WITH STYLE", "PROFESSIONALLY CHILL", "NINE LIVES. ONE CHUTE.", "GOOD DOG. GREAT DROP.", "SMALL WINGS. BIG BRAVERY.", "SILENT BUT WOBBLY", "TOO SWEET TO STING", "RAINBOWS BEFORE GRAVITY", "SOFT BODY. SMART CIRCUITS.", "BOO! ALSO: AAAH!", "FIVE-STAR FREEFALL"]
+const CHARACTER_COLORS := [Color("ff779d"), Color("ffc857"), Color("a390ff"), Color("50dbbd"), Color("f5a66b"), Color("c99157"), Color("f67b76"), Color("a56de2"), Color("f3bc38"), Color("c6a4ed"), Color("98d4ca"), Color("b9e8f4"), Color("f16b7e")]
+const CHARACTER_NAMES := ["STAR", "MANGO", "BUBBLES", "PICKLE", "SIR POUNCE", "BARKLEY", "TOASTY", "2 CHAINZ, NO BONES", "BUZZBERT", "SIR SPARKLES", "WOBBLEBOT", "BOOBERRY", "CHEF WOBBLE"]
+const CHARACTER_TRAITS := ["BORN TO SHINE", "HAPPILY CLUELESS", "DRAMA WITH STYLE", "PROFESSIONALLY CHILL", "NINE LIVES. ONE CHUTE.", "GOOD DOG. GREAT DROP.", "SMALL WINGS. BIG BRAVERY.", "SOLID GOLD. ZERO BONES.", "TOO SWEET TO STING", "RAINBOWS BEFORE GRAVITY", "SOFT BODY. SMART CIRCUITS.", "BOO! ALSO: AAAH!", "FIVE-STAR FREEFALL"]
 var COLORS: Array[Color] = [Color("ff779d"), Color("ffc857"), Color("a390ff"), Color("50dbbd")]
 var NAMES: Array[String] = ["YOU", "MANGO", "BUBBLES", "PICKLE"]
 var selected_character := 0
@@ -53,7 +53,8 @@ var carousel_time := 1.0
 var carousel_direction := 1.0
 const CAROUSEL_DURATION := 0.42
 const POINTS := [10, 7, 4, 2]
-const CHARACTER_PRICES := [0, 0, 0, 0, 500, 500, 300, 300, 200, 500, 300, 200, 200]
+const CHARACTER_SHOP_ORDER := [4, 5, 6, 8, 9, 10, 11, 7, 12]
+const CHARACTER_PRICES := [0, 0, 0, 0, 500, 500, 300, 500, 200, 500, 300, 200, 200]
 # Earlier deployments cost time; all opponents use the player's flight physics.
 const RIVAL_DEPLOY_RANGES := [Vector2(18.6, 20.0), Vector2(17.0, 18.6), Vector2(16.0, 17.0)]
 var rival_round_form := 0.0
@@ -93,6 +94,10 @@ var badge: Label
 var stats: Label
 var particles: Array[Dictionary] = []
 var dust: Array[Dictionary] = []
+var reviews: Node
+var updates: Node
+var review_data: Dictionary = {}
+var responsive: RefCounted
 var toon_art: RefCounted
 var rng := RandomNumberGenerator.new()
 var animation_time := 0.0
@@ -120,7 +125,7 @@ const CHARACTER_JOKES := [
 	["I MEANT TO LAND THERE.", "EIGHT LIVES LEFT!", "PURRFECT LANDING."],
 	["WHO IS A GOOD PILOT?", "DID SOMEONE SAY TREAT?", "TAILWIND INCLUDED!"],
 	["MY WINGS ARE DECORATIVE!", "THAT WAS JUST A WARM-UP.", "FIRE? I PREFER JELLY."],
-	["YOU NEVER SAW ME FALL.", "STEALTH MODE: WOBBLY.", "GRAVITY FOUND ME."],
+	["TWO CHAINS. ZERO BONES.", "MY BLING NEEDS A CHUTE!", "DROPPING BEATS. ALSO ME."],
 	["BUZZING WITH TALENT!", "MY WINGS NEED A BREAK.", "HONEY, I LANDED!"],
 	["RAINBOW EXPRESS!", "MY MANE LANDED FIRST.", "MAGIC NEEDS A CHUTE TOO."],
 	["LANDING.EXE COMPLETE.", "ERROR: TOO MUCH GRAVITY.", "REBOOTING MY DIGNITY."],
@@ -139,8 +144,16 @@ func _ready() -> void:
 	_make_ui()
 	toon_art = preload("res://toon_art.gd").new(self)
 	toon_art.configure_ui()
+	responsive = preload("res://responsive_layout.gd").new(self)
+	responsive.update()
 	_reset_racers()
 	_menu()
+	reviews = preload("res://app_reviews.gd").new()
+	reviews.name = "AppReviews"
+	add_child(reviews)
+	updates = preload("res://app_updates.gd").new()
+	updates.name = "AppUpdates"
+	add_child(updates)
 
 func _make_ui() -> void:
 	var layer := CanvasLayer.new()
@@ -395,6 +408,7 @@ func _deploy(i: int) -> void:
 		_tone(660.0, 0.12)
 
 func _process(delta: float) -> void:
+	responsive.update()
 	if state == "menu":
 		displayed_career_points = move_toward(displayed_career_points, float(credits), maxf(12.0, absf(credits - displayed_career_points) * 7.0) * delta)
 	if state in ["results", "podium"]:
@@ -604,7 +618,11 @@ func _settle_tournament() -> void:
 		return
 	var reward := totals[0]
 	var old_wins := wins
+	var previous_tournaments := int(review_data.get("completed_tournaments", 0))
+	var previous_streak := int(review_data.get("win_streak", 0))
+	review_data["completed_tournaments"] = previous_tournaments + 1
 	var order := reaction_order() if state == "podium" else _tournament_order()
+	review_data["win_streak"] = previous_streak + 1 if order[0] == 0 else 0
 	credits += reward
 	career_points += reward
 	if order[0] == 0:
@@ -616,6 +634,8 @@ func _settle_tournament() -> void:
 		credits -= reward
 		career_points -= reward
 		wins = old_wins
+		review_data["completed_tournaments"] = previous_tournaments
+		review_data["win_streak"] = previous_streak
 
 func _tournament_order() -> Array[int]:
 	var order: Array[int] = [0, 1, 2, 3]
@@ -752,6 +772,11 @@ func _load_record() -> void:
 	else:
 		return
 	save_blocked = false
+	review_data.clear()
+	for key in ["completed_tournaments", "win_streak", "attempts", "last_attempt_at", "retry_after"]:
+		var value = config.get_value("reviews", key, 0)
+		if (value is int or value is float) and is_finite(float(value)):
+			review_data[key] = maxi(0, int(value))
 	best_time = maxf(0.0, float(config.get_value("records", "best_time", 0.0)))
 	wins = maxi(0, int(config.get_value("records", "wins", 0)))
 	career_points = maxi(0, int(config.get_value("records", "career_points", 0)))
@@ -804,6 +829,8 @@ func _save_record() -> Error:
 	if save_blocked:
 		return ERR_FILE_CORRUPT
 	var config := ConfigFile.new()
+	for key in review_data:
+		config.set_value("reviews", key, review_data[key])
 	config.set_value("records", "best_time", best_time)
 	config.set_value("records", "wins", wins)
 	config.set_value("records", "career_points", career_points)

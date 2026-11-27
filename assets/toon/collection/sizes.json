@@ -39,17 +39,17 @@
     "runtime_bytes": 174692
   },
   {
-    "id": "ninja",
+    "id": "bling",
     "original_size": [
       1254,
       1254
     ],
-    "original_bytes": 772413,
+    "original_bytes": 892000,
     "runtime_size": [
-      512,
-      512
+      1254,
+      1254
     ],
-    "runtime_bytes": 156693
+    "runtime_bytes": 892000
   },
   {
     "id": "bee",

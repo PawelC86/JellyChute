@@ -89,9 +89,9 @@ Normal completed rounds go to results 0.8 seconds after all racers land, without
 
 ## Additional jelly collection
 
-Nine additional painted jellies extend the original four: Sir Pounce (cat), Barkley (dog), Toasty (dragon), Sneaky Bean (ninja), Buzzbert (bee), Sir Sparkles (unicorn), Wobblebot (robot), Booberry (ghost), and Chef Wobble (chef). Owned characters can be previewed and confirmed in the existing character carousel; four unique racers still participate in each race. New selections persist with the existing encrypted progress format. Parachutes are selected independently; the four original canopies are free and nine additional cosmetics are available in the shop.
+Nine additional painted jellies extend the original four: Sir Pounce (cat), Barkley (dog), Toasty (dragon), 2 CHAINZ, NO BONES (bling rapper), Buzzbert (bee), Sir Sparkles (unicorn), Wobblebot (robot), Booberry (ghost), and Chef Wobble (chef). Owned characters can be previewed and confirmed in the existing character carousel; four unique racers still participate in each race. New selections persist with the existing encrypted progress format. Parachutes are selected independently; the four original canopies are free and nine additional cosmetics are available in the shop.
 
-The Jellies shop tab displays the nine new characters in three columns and three rows. Locked characters are dimmed and marked with a lock. Purchase buttons show 200/300/500-credit prices, then EQUIP or EQUIPPED after ownership. Cat, dog and unicorn cost 500; dragon, ninja and robot cost 300; bee, ghost and chef cost 200. Purchases validate funds and ownership and roll back if saving fails. Ads are not integrated. `assets/toon/collection/README.md` documents asset layout and optimization. `work/capture-collection.gd` verifies and captures all new characters in the menu, freefall, open-chute and crash states plus shop/podium views. Local source art and capture outputs are excluded from Git and Godot resource scanning.
+The Jellies shop tab displays the nine new characters in three columns and three rows. Locked characters are dimmed and marked with a lock. Purchase buttons show 200/300/500-credit prices, then EQUIP or EQUIPPED after ownership. Cat, dog, rapper and unicorn cost 500; dragon and robot cost 300; bee, ghost and chef cost 200. Purchases validate funds and ownership and roll back if saving fails. Ads are not integrated. `assets/toon/collection/README.md` documents asset layout and optimization. `work/capture-collection.gd` verifies and captures all new characters in the menu, freefall, open-chute and crash states plus shop/podium views. Local source art and capture outputs are excluded from Git and Godot resource scanning.
 
 `work/economy-check.gd` verifies wallet migration, prices, purchase/equip states, insufficient funds, save rollback, locked carousel filtering, complete-tournament-only rewards, zero rewards for crashes, persistence and duplicate payout protection.
 
@@ -121,3 +121,40 @@ export_presets.cfg contains Android APK - test (builds/JellyChute-test.apk) and 
 The matching Godot 4.7.2 Android Gradle template is installed locally under android/build (ignored by Git). On a fresh checkout, install the matching Android build template from Godot before exporting. Work previews, icon proposals and development files are excluded from exports. Export credentials stay ignored; no alchemiQ signing secrets or plugins were copied.
 
 For a test APK, choose Android APK - test and export with debug enabled. For Google Play, choose Android AAB - Google Play, configure the release keystore and credentials in Godot, and export with debug disabled. Android SDK/JDK settings are machine-local. Release exports require signing credentials; increase version/code for subsequent store uploads. No APK or AAB was built while preparing these profiles.
+## Google Play flexible updates
+
+Android uses Play app-update 2.1.0. After installing/replacing the matching Godot Android build template, run `powershell -ExecutionPolicy Bypass -File android/updates/install.ps1` before exporting either Android preset. This idempotently wires the tracked Java plugin, dependency and plugin metadata into the generated template. No signing credentials are changed.
+
+The plugin checks at startup and on resume. Consent is offered once per process, only in the menu; Google Play downloads in the background. A downloaded update displays the restart dialog in the menu, never during a tournament. LATER defers it until the next launch. Restart first flushes the encrypted save; save errors block restart, and Play completion errors allow retry. Non-Android/offline/non-Play installations remain playable.
+
+End-to-end verification requires a Play-installed build, the same application ID/signing identity and a higher versionCode available to the tester through Google Play. Use an internal test track or internal app sharing. A desktop screenshot uses a fake downloaded state, not a real Play download.
+
+Validation: update-state/UI checks passed (work/app-updates-check.gd), Android Java compilation passed, and the debug APK exported with plugin class and manifest registration verified. The general smoke test reports a chute-selection assertion at work/smoke.gd:658; the same failure was reproduced with the update integration removed from an in-memory baseline script.
+
+## Responsive portrait layout
+
+The viewport uses canvas_items + expand. responsive_layout.gd computes a uniformly scaled 540x960 gameplay reference inside the current Android display safe area. Additional height anchors the menu logo and race header upward and action controls/credits downward; the world and physics retain their original metre/pixel mapping. Wider portrait displays add scenery at the sides. Sky fills the complete viewport and scenic landscapes preserve their aspect ratio while covering the bottom. Runtime resize/resume recomputes the layout. The update overlay remains full-screen and its card is centered inside the safe area.
+
+Validation: work/responsive-check.gd captures menu, both shop tabs, countdown, landing, results, podium and update dialog at 16:9, 19.5:9, 20:9, 21:9 and portrait 3:4. It checks painted corners, action bounds, actual mouse hit targets after resize and synthetic cutout/navigation insets. Android safe-area behavior still needs a physical-device check. During this validation, shop portrait rendering was corrected to avoid reading gameplay state from a portrait drawing node.
+
+Godot resolution reference: https://docs.godotengine.org/en/stable/tutorials/rendering/multiple_resolutions.html
+
+## Google Play in-app reviews
+
+Uses the native unmodified Google Play review card (review 2.0.2). The same android/updates/install.ps1 wires both updates and reviews into a fresh Godot Android template.
+
+First eligibility requires 3 consecutive completed tournament wins. Only a settled podium (4 seconds), after at least 60 seconds in the current process, is eligible. A non-winning completed tournament resets the streak; abandoning an unfinished tournament does not count as a completed result. Purchases and predicted star ratings are never used. Preparing a review is asynchronous and expires after 10 seconds; leaving the podium or backgrounding cancels the pending request. Updates take priority. The game pauses only while the native review flow is active and resumes on completion.
+
+After the first launch attempt, wait at least 30 days. After the second and subsequent attempts, wait at least 60 days from the latest attempt. Each launch resets the win streak, so another series of 3 wins is required. There is at most one preparation per process; there is no lifetime attempt cap. Preparation errors back off for 24 hours. Persist the attempt and cleared streak before calling Play; a save error prevents launch and rolls back those fields. Tournament totals and streak updates are saved atomically with tournament rewards, exactly once. Counters/cooldowns live in the existing encrypted save. App updates retain them; clearing app data resets them. Old saves start at zero wins for this mechanism.
+
+Play may suppress the card due to its own quota and does not report whether a rating was submitted. Completion is not treated as a submitted review. No custom pre-prompt, incentives, rating filter or forced store redirect is used. End-to-end testing needs a Play installation/internal test setup; local checks use a fake bridge.
+
+References: https://developer.android.com/guide/playcore/in-app-review and https://developer.android.com/guide/playcore/in-app-review/kotlin-java
+
+Review validation: work/app-reviews-check.gd covers 3-win eligibility, loss reset, exact 30/60-day thresholds, backward-clock suppression, saved cooldown reload, exactly-once tournament settlement, failed-save rollback, stale preparation cancellation, timeout backoff, update/background guards and pause/resume with a fake Play bridge. Native Java compilation passed. The review-feature APK export was cancelled at the user request. Create APK/AAB only when explicitly requested. The real Play review card and quota require Play-based device testing.
+
+## 2 CHAINZ, NO BONES
+
+Character ID 7 replaces the former ninja, preserving existing ownership and saved selections. Built-in image_gen produced assets/toon/collection/bling.png: purple blank-faced body, separately seated cap, bracelet arm and double gold necklace. Runtime eyes/mouth remain animated in every game state. The cap is scaled to 66x35 logical units, with a closed front band and no visible interior/rear lower rim and its underside is embedded in the scalp, sharing the body transform. The primary purple also drives its landing pad. Prompt: work/bling-prompt.txt.
+
+Price: 500 credits. CHARACTER_SHOP_ORDER places ID 7 at row 3, column 2; card drawings, clipped portraits and purchase hit areas all use that order, while save IDs remain stable. The shop name is split across two readable lines. work/bling-check.gd verifies insufficient funds, purchase/equip, bottom-center button, persistent ID/ownership and captures menu, flight, landing and podium. The economy regression check also passes. No APK/AAB export was performed.
